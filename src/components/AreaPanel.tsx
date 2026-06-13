@@ -69,7 +69,8 @@ export default function AreaPanel({
   const backOffice =
     game.current === 0 && !ui.busy && !game.over && (!head || head.kind === "area");
 
-  const [move, setMove] = useState<MoveKind | null>(null);
+  // open on a ready-to-go arbitrage deal so the panel is immediately actionable
+  const [move, setMove] = useState<MoveKind | null>("rent");
   const [model, setModel] = useState<OpModel>("STR");
   const [furnish, setFurnish] = useState<FurnishType>("fast");
   const [withLicence, setWithLicence] = useState(false);
@@ -94,6 +95,9 @@ export default function AreaPanel({
   const licNeeded = move ? needsLicence(area, model, me) : false;
   const licProb = licenceSuccessProb(area, model, me);
   const stayFee = stayFeeFor(game, area.id, 0);
+  const presence = game.players
+    .map((p) => ({ p, units: areaUnits(game, p.id, area.id) }))
+    .filter((x) => x.units > 0 && !x.p.bankrupt);
 
   const confirm = () => {
     if (!move || !projection) return;
@@ -148,35 +152,25 @@ export default function AreaPanel({
         </div>
       )}
 
-      {/* control summary */}
-      <div className="grid grid-cols-3 gap-1.5">
-        {game.players.map((p) => {
-          const units = areaUnits(game, p.id, area.id);
-          const liveUnits = p.assets.reduce(
-            (s, a) => (a.areaId === area.id && a.status === "live" ? s + a.units : s),
-            0,
-          );
-          return (
-            <div
+      {/* who operates here — compact (no dead space when it's empty) */}
+      {presence.length === 0 ? (
+        <div className="rounded-lg bg-ink-800/40 px-3 py-1.5 text-[0.72rem] text-cream-50/50">
+          Nobody operates here yet. It&apos;s all yours to claim.
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {presence.map(({ p, units }) => (
+            <span
               key={p.id}
-              className={clsx("panel px-2 py-1.5", controllerId === p.id && "border-2")}
-              style={controllerId === p.id ? { borderColor: `${p.color}99` } : undefined}
+              className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[0.68rem] font-bold"
+              style={{ borderColor: `${p.color}66`, background: `${p.color}14`, color: p.color }}
+              title={controllerId === p.id ? `${p.name} controls this area` : `${p.name}: ${units} units here`}
             >
-              <div className="flex items-center gap-1 text-[0.62rem] font-bold" style={{ color: p.color }}>
-                <span className="h-2 w-2 rounded-full" style={{ background: p.color }} />
-                {p.name}
-              </div>
-              <div className="font-ledger text-sm font-extrabold">
-                {units}
-                <span className="text-[0.6rem] font-semibold text-cream-50/45"> unit{units === 1 ? "" : "s"}</span>
-              </div>
-              <div className="text-[0.56rem] text-cream-50/45">
-                {units === 0 ? "no presence" : `${liveUnits} live · ${units - liveUnits} pipeline`}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+              {p.emoji} {p.name} · {units}u{controllerId === p.id ? " 🚩" : ""}
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* assets here */}
       <AssetsHere areaId={area.id} backOffice={backOffice} />
@@ -269,7 +263,11 @@ export default function AreaPanel({
               </div>
 
               {move !== "manage" && (
-                <div className="grid grid-cols-2 gap-1.5">
+                <div className="space-y-1.5">
+                  <div className="text-[0.6rem] font-bold uppercase tracking-wider text-cream-50/45">
+                    Furnishing speed
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
                   {(["fast", "slow"] as FurnishType[]).map((f) => {
                     const spec = FURNISH_SPECS[f];
                     const months = spec.months(move === "building" ? "building" : "unit");
@@ -294,6 +292,7 @@ export default function AreaPanel({
                       </button>
                     );
                   })}
+                  </div>
                 </div>
               )}
 
@@ -327,6 +326,9 @@ export default function AreaPanel({
               {/* impact preview */}
               {projection && (
                 <>
+                  <div className="text-[0.6rem] font-bold uppercase tracking-wider text-cream-50/45">
+                    If you confirm
+                  </div>
                   <div className="grid grid-cols-4 gap-1.5">
                     {(
                       [
@@ -356,16 +358,16 @@ export default function AreaPanel({
             </div>
           )}
 
-          {/* CTA */}
-          <div className="flex gap-1.5">
-            <button onClick={() => act({ t: "CLOSE_AREA" })} className="btn-dark h-11 flex-1 text-sm">
+          {/* CTA — pinned to the bottom so it's always reachable without scrolling */}
+          <div className="sticky bottom-0 z-10 -mx-3 -mb-3 mt-1 flex gap-1.5 rounded-b-[1.1rem] border-t border-line/60 bg-ink-900/95 px-3 pt-2.5 backdrop-blur safe-bottom shadow-[0_-10px_24px_-10px_rgba(0,0,0,0.7)]">
+            <button onClick={() => act({ t: "CLOSE_AREA" })} className="btn-dark h-12 flex-1 text-sm">
               {move ? "Skip" : "Done here"}
             </button>
             {move && projection && (
               <button
                 disabled={!projection.affordable}
                 onClick={confirm}
-                className="btn-primary h-11 flex-[2] text-[0.8rem]"
+                className="btn-primary h-12 flex-[2] text-[0.82rem]"
               >
                 {projection.affordable
                   ? `${MOVE_META[move].title} · ${gbp(projection.costs.cashNow + (withLicence || model === "HOTEL" ? projection.costs.licenceCost : 0))}`
