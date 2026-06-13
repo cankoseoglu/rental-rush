@@ -213,16 +213,31 @@ export function StatusTag({
   monthsToLive?: number;
   licenceMonths?: number;
 }) {
-  const map: Record<string, [string, string]> = {
-    live: ["LIVE", "#B9F33E"],
-    prep: [`BUILD ${monthsToLive ?? "?"}M`, "#FFB454"],
-    furnishing: [`FURN ${monthsToLive ?? "?"}M`, "#FFB454"],
-    awaitingLicence: [`LIC ${licenceMonths && licenceMonths > 0 ? `${licenceMonths}M` : "WAIT"}`, "#C9A0FF"],
-    suspended: ["SUSPENDED", "#FF6F61"],
+  const m = monthsToLive ?? 0;
+  const lic = licenceMonths ?? 0;
+  const map: Record<string, [string, string, string]> = {
+    live: ["🟢 Live", "#B9F33E", "Open and earning now."],
+    prep: [
+      `🏗️ Building · ${m}mo`,
+      "#FFB454",
+      `Early setup — fit-out starts next month, live in about ${m} month${m === 1 ? "" : "s"}. No income yet.`,
+    ],
+    furnishing: [
+      `🛋️ Furnishing · ${m}mo`,
+      "#FFB454",
+      `Being furnished — goes live in ${m} month${m === 1 ? "" : "s"}. No income until then.`,
+    ],
+    awaitingLicence: [
+      lic > 0 ? `📋 Awaiting licence · ${lic}mo` : "📋 Awaiting licence",
+      "#C9A0FF",
+      "Furnished, but it can't open until the licence is approved.",
+    ],
+    suspended: ["⛔ Suspended", "#FF6F61", "Temporarily shut down — no income this month."],
   };
-  const [label, color] = map[status] ?? [status.toUpperCase(), "#8aa"];
+  const [label, color, title] = map[status] ?? [status, "#8aa", ""];
   return (
     <span
+      title={title}
       className="rounded-md px-1.5 py-0.5 text-[0.6rem] font-extrabold tracking-wide"
       style={{ background: `${color}1f`, color, border: `1px solid ${color}55` }}
     >

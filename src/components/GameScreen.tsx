@@ -1,8 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import { useGame } from "@/lib/store";
 import Board from "./Board";
 import AreaPanel from "./AreaPanel";
+import BoardKey from "./BoardKey";
 import { PlayerStrip, HumanHud, ActionDock } from "./Hud";
 import Modals from "./Modals";
 import Sheets from "./Sheets";
@@ -15,6 +17,7 @@ export default function GameScreen() {
   const toggleSound = useGame((s) => s.toggleSound);
   const quitToMenu = useGame((s) => s.quitToMenu);
   const selectArea = useGame((s) => s.selectArea);
+  const [keyOpen, setKeyOpen] = useState(false);
   if (!game) return null;
 
   const head = game.pendingQueue[0];
@@ -45,6 +48,9 @@ export default function GameScreen() {
               </button>
               <button onClick={() => setSpeed(ui.speed === 1 ? 2 : 1)} className="chip text-cream-50/70" aria-label="toggle game speed">
                 {ui.speed === 1 ? "1×" : "2×"} ⏩
+              </button>
+              <button onClick={() => setKeyOpen(true)} className="chip text-cream-50/70" aria-label="board key">
+                ❔ Key
               </button>
               <button onClick={quitToMenu} className="chip text-cream-50/70" aria-label="menu">
                 ☰
@@ -89,6 +95,7 @@ export default function GameScreen() {
       <ActionDock />
       <Modals />
       <Sheets />
+      <BoardKey open={keyOpen} onClose={() => setKeyOpen(false)} />
     </div>
   );
 }

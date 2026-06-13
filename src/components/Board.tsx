@@ -15,17 +15,34 @@ import clsx from "clsx";
 
 const levelLabel = (l: number) => "£".repeat(l);
 
+// Pipeline badges: a property here isn't live yet. Icon shows the stage,
+// "Nmo" the months left; the full sentence lives in the hover tooltip, and the
+// left stripe is colour-coded to whoever owns it.
 function pipelineBadges(state: GameState, areaId: string) {
   const badges: Array<{ text: string; color: string; title: string }> = [];
   for (const p of state.players) {
+    const who = p.isHuman ? "You have" : `${p.name} has`;
     for (const a of p.assets) {
       if (a.areaId !== areaId) continue;
+      const what = a.kind === "building" ? `a ${a.units}-unit building` : "a unit";
       if (a.status === "prep")
-        badges.push({ text: `BUILD ${a.monthsToLive}M`, color: p.color, title: `${p.name}: building prep` });
+        badges.push({
+          text: `🏗️ ${a.monthsToLive}mo`,
+          color: p.color,
+          title: `${who} ${what} in early setup here — fit-out starts next month, live in about ${a.monthsToLive} month${a.monthsToLive === 1 ? "" : "s"}. No income yet.`,
+        });
       else if (a.status === "furnishing")
-        badges.push({ text: `FURN ${a.monthsToLive}M`, color: p.color, title: `${p.name}: furnishing` });
+        badges.push({
+          text: `🛋️ ${a.monthsToLive}mo`,
+          color: p.color,
+          title: `${who} ${what} being furnished here — goes live in ${a.monthsToLive} month${a.monthsToLive === 1 ? "" : "s"}. No income until then.`,
+        });
       if (a.licence === "applied")
-        badges.push({ text: `LIC ${a.licenceMonths}M`, color: p.color, title: `${p.name}: licence pending` });
+        badges.push({
+          text: `📋 ${a.licenceMonths}mo`,
+          color: p.color,
+          title: `${who} a licence application pending here — the council decides in ${a.licenceMonths} month${a.licenceMonths === 1 ? "" : "s"}.`,
+        });
     }
   }
   return badges.slice(0, 2);
