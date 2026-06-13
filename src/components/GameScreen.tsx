@@ -27,20 +27,11 @@ export default function GameScreen() {
       : null;
   const panelAreaId = interactiveArea ?? ui.selectedAreaId;
 
-  const scoutHint = (
-    <div className="p-6 text-center text-[0.78rem] text-cream-50/45">
-      <div className="mb-2 text-2xl">🗺️</div>
-      Tap any neighbourhood to inspect it.
-      <br />
-      Land on one to do deals.
-    </div>
-  );
-
   return (
     <div className="min-h-dvh" data-testid="game-screen">
-      <div className="mx-auto flex max-w-[1600px] flex-col gap-2.5 pb-32 pt-2 lg:flex-row lg:justify-center lg:items-start lg:gap-5 lg:px-5">
-        {/* LEFT: thin top bar + the board, sized to fill the screen height */}
-        <div className="flex min-w-0 flex-col gap-2.5 lg:w-[min(calc(100vw-420px),calc(100svh-120px))] lg:shrink-0">
+      <div className="mx-auto flex max-w-[1600px] flex-col gap-2.5 pb-32 pt-2 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(340px,380px)] lg:items-start lg:gap-5 lg:px-5">
+        {/* left column: chrome + board */}
+        <div className="flex min-w-0 flex-col gap-2.5">
           <div className="flex w-full items-center justify-between px-3 lg:px-0">
             <button onClick={quitToMenu} className="font-display text-sm font-extrabold tracking-tight">
               RENTAL<span className="text-lime-400">RUSH</span>
@@ -67,27 +58,23 @@ export default function GameScreen() {
             </div>
           </div>
 
-          {/* mobile keeps players above + meters below the board */}
-          <div className="lg:hidden">
-            <PlayerStrip />
-          </div>
+          <PlayerStrip />
           <Board />
-          <div className="lg:hidden">
-            <HumanHud />
-          </div>
+          <HumanHud />
         </div>
 
-        {/* RIGHT rail (desktop): players, meters, then the area panel */}
-        <aside className="sticky top-2 hidden max-h-[calc(100dvh-1rem)] w-[360px] shrink-0 flex-col gap-2.5 overflow-y-auto lg:flex">
-          <PlayerStrip />
-          <HumanHud />
-          <div className="panel">
-            {panelAreaId ? (
-              <AreaPanel areaId={panelAreaId} interactive={interactiveArea === panelAreaId} />
-            ) : (
-              scoutHint
-            )}
-          </div>
+        {/* right rail (desktop) */}
+        <aside className="panel sticky top-2 hidden max-h-[calc(100dvh-1rem)] overflow-y-auto lg:block">
+          {panelAreaId ? (
+            <AreaPanel areaId={panelAreaId} interactive={interactiveArea === panelAreaId} />
+          ) : (
+            <div className="p-6 text-center text-[0.78rem] text-cream-50/45">
+              <div className="mb-2 text-2xl">🗺️</div>
+              Tap any neighbourhood to inspect it.
+              <br />
+              Land on one to do deals.
+            </div>
+          )}
         </aside>
       </div>
 
