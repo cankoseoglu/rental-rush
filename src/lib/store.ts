@@ -59,6 +59,8 @@ interface Store {
 
 let toastId = 1;
 let logCursor = 0;
+let lastHumanCash = 150_000; // money-SFX watcher state
+let lastHumanBankrupt = false;
 
 const initialUI = (): UI => ({
   screen: "menu",
@@ -89,7 +91,23 @@ export const useGame = create<Store>()((set, get) => {
 
   const refresh = () => {
     const g = get().game;
-    if (g) set({ game: { ...g } });
+    if (!g) return;
+    // money cues, driven off the human's cash in one place so every source
+    // (own spends, fees paid AND fees received on rivals' turns, month-end,
+    // sales, auctions) rings without per-call wiring
+    const h = g.players[0];
+    if (get().ui.screen === "game") {
+      if (h.bankrupt && !lastHumanBankrupt) {
+        audio.playError();
+      } else if (!h.bankrupt && h.cash !== lastHumanCash) {
+        const d = h.cash - lastHumanCash;
+        if (d >= 250) audio.playCash();
+        else if (d <= -250) audio.playSpend();
+      }
+    }
+    lastHumanCash = h.cash;
+    lastHumanBankrupt = h.bankrupt;
+    set({ game: { ...g } });
   };
 
   const pushToasts = () => {
@@ -144,6 +162,7 @@ export const useGame = create<Store>()((set, get) => {
       audio.playHop(hop++);
       await sleep(175);
     }
+    if (g.lastPath.length) audio.playClink(); // token sets down on its tile
     await sleep(220);
   };
 
@@ -301,6 +320,8 @@ export const useGame = create<Store>()((set, get) => {
         dailyKey: mode === "daily" ? todayKey() : undefined,
       });
       logCursor = 0;
+      lastHumanCash = game.players[0].cash;
+      lastHumanBankrupt = false;
       set((s) => ({
         game,
         ui: {
@@ -323,6 +344,8 @@ export const useGame = create<Store>()((set, get) => {
       const game = loadGame();
       if (!game) return;
       logCursor = game.log.length;
+      lastHumanCash = game.players[0].cash;
+      lastHumanBankrupt = game.players[0].bankrupt;
       set((s) => ({ game, ui: { ...initialUI(), screen: "game", soundMuted: s.ui.soundMuted } }));
       syncTokens();
       audio.initAudio();
@@ -373,10 +396,34 @@ export const useGame = create<Store>()((set, get) => {
     act: (a) => {
       const g = get().game;
       if (!g || g.over) return;
+      // detect a spend that bounces (can't afford / not allowed) → error tone
+      const spendIntent =
+        a.t === "ACQUIRE" ||
+        a.t === "LOAN" ||
+        a.t === "HIRE" ||
+        a.t === "APPLY_LICENCE" ||
+        a.t === "UPGRADE_COMPLIANCE" ||
+        a.t === "RENOVATE";
+      const p0 = g.players[0];
+      const snap = spendIntent
+        ? { cash: p0.cash, assets: p0.assets.length, staff: p0.staff.length, permits: p0.permits.length, loans: p0.loans.length }
+        : null;
       dispatch(g, a);
       saveGame(g);
       pushToasts();
       refresh();
+      if (snap) {
+        const q = g.players[0];
+        if (
+          q.cash === snap.cash &&
+          q.assets.length === snap.assets &&
+          q.staff.length === snap.staff &&
+          q.permits.length === snap.permits &&
+          q.loans.length === snap.loans
+        ) {
+          audio.playError(); // nothing changed → the action was rejected
+        }
+      }
       if (g.over) {
         showOver();
         return;

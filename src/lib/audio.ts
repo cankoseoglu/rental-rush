@@ -147,6 +147,94 @@ export function playHop(i: number): void {
   blip(c, master, now, freq * 1.6, freq, 0.12, 0.14, "sine");
 }
 
+// --- money & feedback cues ---------------------------------------------------
+// Generic, synthesized takes on the universal game-money sounds: a register
+// ring for cash in, a terminal beep for cash out, a fail tone, a token clink.
+
+/** A short ringing bell (sine fundamental + shimmer partials). */
+function bell(c: AudioContext, t: number, freq: number, vol: number, decay: number) {
+  if (!master) return;
+  for (const [mult, v] of [
+    [1, vol],
+    [2, vol * 0.4],
+    [2.76, vol * 0.18], // inharmonic partial → metallic sparkle
+  ] as const) {
+    const o = c.createOscillator();
+    o.type = "sine";
+    o.frequency.value = freq * mult;
+    const g = c.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(v, t + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + decay);
+    o.connect(g).connect(master);
+    o.start(t);
+    o.stop(t + decay + 0.05);
+  }
+}
+
+/** Cash collected: a sparkling two-note register ring with a drawer "cha". */
+export function playCash(): void {
+  const c = ensureCtx();
+  if (!c || !master || muted) return;
+  if (c.state === "suspended") void c.resume();
+  const now = c.currentTime;
+  // drawer/bell-strike noise
+  const noise = c.createBufferSource();
+  noise.buffer = getNoise(c);
+  const hp = c.createBiquadFilter();
+  hp.type = "highpass";
+  hp.frequency.value = 3200;
+  const ng = c.createGain();
+  ng.gain.setValueAtTime(0.1, now);
+  ng.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
+  noise.connect(hp).connect(ng).connect(master);
+  noise.start(now);
+  noise.stop(now + 0.08);
+  // two ascending dings
+  bell(c, now, 1318.5, 0.17, 0.4); // E6
+  bell(c, now + 0.085, 1760, 0.2, 0.55); // A6
+}
+
+/** Cash spent: a crisp two-tone electronic terminal beep. */
+export function playSpend(): void {
+  const c = ensureCtx();
+  if (!c || !master || muted) return;
+  if (c.state === "suspended") void c.resume();
+  const now = c.currentTime;
+  blip(c, master, now, 920, 920, 0.09, 0.06, "square");
+  blip(c, master, now + 0.085, 1380, 1380, 0.09, 0.07, "square");
+}
+
+/** Failed transaction / insolvency: a buzzy descending "denied" tone. */
+export function playError(): void {
+  const c = ensureCtx();
+  if (!c || !master || muted) return;
+  if (c.state === "suspended") void c.resume();
+  const now = c.currentTime;
+  blip(c, master, now, 400, 300, 0.1, 0.18, "sawtooth");
+  blip(c, master, now + 0.14, 300, 196, 0.1, 0.24, "sawtooth");
+}
+
+/** Token set-down: a tiny metallic clink (high ping + filtered tick). */
+export function playClink(): void {
+  const c = ensureCtx();
+  if (!c || !master || muted) return;
+  const now = c.currentTime;
+  bell(c, now, 2300, 0.09, 0.13);
+  const noise = c.createBufferSource();
+  noise.buffer = getNoise(c);
+  const bp = c.createBiquadFilter();
+  bp.type = "bandpass";
+  bp.frequency.value = 5200;
+  bp.Q.value = 2.2;
+  const ng = c.createGain();
+  ng.gain.setValueAtTime(0.07, now);
+  ng.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
+  noise.connect(bp).connect(ng).connect(master);
+  noise.start(now);
+  noise.stop(now + 0.05);
+}
+
 // --- background melody -------------------------------------------------------
 // A warm lo-fi loop: chords + walking bass + a music-box melody with a soft
 // echo. Two 8-bar phrases (A then B over the same C–Am–F–G changes) make a
@@ -313,4 +401,12 @@ export function stopBackground(): void {
       /* already gone */
     }
   }, 2000);
+}
+
+// Debug/automation handle (used by scripts; harmless in production).
+if (typeof window !== "undefined") {
+  (window as unknown as { __audio?: unknown }).__audio = {
+    playDice, playHop, playCash, playSpend, playError, playClink,
+    startBackground, stopBackground, setMuted, isMuted, initAudio,
+  };
 }
