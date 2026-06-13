@@ -203,10 +203,21 @@ body {
   animation: popIn 0.35s cubic-bezier(0.2, 1.4, 0.4, 1) both;
 }
 
+@keyframes tokenHop {
+  0% { transform: translateY(0) scale(1); }
+  40% { transform: translateY(-8px) scale(1.08, 0.94); }
+  75% { transform: translateY(1px) scale(0.97, 1.04); }
+  100% { transform: translateY(0) scale(1); }
+}
+.token-hop {
+  animation: tokenHop 0.18s ease-out both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .tile-active,
   .dice-rolling,
-  .pop-in {
+  .pop-in,
+  .token-hop {
     animation: none !important;
   }
   * {

@@ -60,7 +60,6 @@ function AreaTile({ tile, state }: { tile: Tile; state: GameState }) {
   const pills = ownerPills(state, area.id);
   const chips = modelChips(state, area.id);
   const pipes = pipelineBadges(state, area.id);
-  const tokens = state.players.filter((p) => !p.bankrupt && ui.displayPos[p.id] === tile.idx);
   const isLanding = ui.displayPos[state.current] === tile.idx && ui.busy;
   const selected = ui.selectedAreaId === area.id;
 
@@ -125,30 +124,18 @@ function AreaTile({ tile, state }: { tile: Tile; state: GameState }) {
           </div>
         )}
       </div>
-      {/* pipeline + tokens footer */}
-      <div className="flex h-[12px] w-full shrink-0 items-end justify-between px-[2px] pb-[2px]">
-        <div className="flex gap-[2px]">
-          {pipes.map((b, i) => (
-            <span
-              key={i}
-              title={b.title}
-              className="rounded-[3px] border border-[#131722] bg-amber-400 px-[2px] text-[0.36rem] font-extrabold leading-[1.4] text-[#131722] sm:text-[0.42rem]"
-              style={{ borderLeftWidth: 3, borderLeftColor: b.color }}
-            >
-              {b.text}
-            </span>
-          ))}
-        </div>
-        <div className="flex gap-[2px]">
-          {tokens.map((p) => (
-            <span
-              key={p.id}
-              className="pop-in h-[9px] w-[9px] rounded-full border-[1.5px] border-[#131722] sm:h-[11px] sm:w-[11px]"
-              style={{ background: p.color, boxShadow: `0 0 6px ${p.color}aa` }}
-              title={p.name}
-            />
-          ))}
-        </div>
+      {/* pipeline footer */}
+      <div className="flex h-[12px] w-full shrink-0 items-end justify-start gap-[2px] px-[2px] pb-[2px]">
+        {pipes.map((b, i) => (
+          <span
+            key={i}
+            title={b.title}
+            className="rounded-[3px] border border-[#131722] bg-amber-400 px-[2px] text-[0.36rem] font-extrabold leading-[1.4] text-[#131722] sm:text-[0.42rem]"
+            style={{ borderLeftWidth: 3, borderLeftColor: b.color }}
+          >
+            {b.text}
+          </span>
+        ))}
       </div>
     </button>
   );
@@ -156,14 +143,13 @@ function AreaTile({ tile, state }: { tile: Tile; state: GameState }) {
 
 function SpecialTile({ tile, state }: { tile: Tile; state: GameState }) {
   const ui = useGame((s) => s.ui);
-  const tokens = state.players.filter((p) => !p.bankrupt && ui.displayPos[p.id] === tile.idx);
   const isLanding = ui.displayPos[state.current] === tile.idx && ui.busy;
   const corner = tile.kind === "corner" || tile.kind === "start";
   return (
     <div
       title={tile.label}
       className={clsx(
-        "relative flex min-w-0 flex-col items-center justify-center gap-[2px] overflow-hidden rounded-[5px] border-2 border-[#131722] p-[2px] text-center",
+        "relative flex h-full w-full min-w-0 flex-col items-center justify-center gap-[2px] overflow-hidden rounded-[5px] border-2 border-[#131722] p-[2px] text-center",
         tile.kind === "start"
           ? "bg-gradient-to-b from-[#DEF3A8] to-[#C8E882]"
           : corner
@@ -177,16 +163,61 @@ function SpecialTile({ tile, state }: { tile: Tile; state: GameState }) {
       <span className="font-display text-[0.4rem] font-extrabold uppercase leading-[1.05] text-[#131722] sm:text-[0.5rem]">
         {tile.label}
       </span>
-      <div className="absolute bottom-[2px] right-[2px] flex gap-[2px]">
-        {tokens.map((p) => (
-          <span
+    </div>
+  );
+}
+
+/**
+ * Monopoly-style playing pieces: one chunky token per player, standing on the
+ * board in an overlay layer, gliding tile to tile as displayPos animates.
+ * Tokens cluster with per-player offsets so all three fit on one tile.
+ */
+const TOKEN_OFFSETS = [
+  { x: -26, y: -22 }, // You — top-left of the cluster
+  { x: 26, y: -22 }, // Maya — top-right
+  { x: 0, y: 26 }, // Sam — bottom
+];
+
+function TokenLayer({ state }: { state: GameState }) {
+  const ui = useGame((s) => s.ui);
+  return (
+    <div className="pointer-events-none absolute inset-0 z-30">
+      {state.players.map((p) => {
+        if (p.bankrupt) return null;
+        const idx = ui.displayPos[p.id] ?? p.pos;
+        const pos = tileGridPos(idx);
+        const off = TOKEN_OFFSETS[p.id];
+        const isCurrent = state.current === p.id && !state.over;
+        // cell centres in % of the board box (7×7 grid), plus a cluster offset
+        const left = `${((pos.col - 0.5) / 7) * 100 + off.x / 7}%`;
+        const top = `${((pos.row - 0.5) / 7) * 100 + off.y / 7}%`;
+        return (
+          <div
             key={p.id}
-            className="pop-in h-[9px] w-[9px] rounded-full border-[1.5px] border-[#131722] sm:h-[11px] sm:w-[11px]"
-            style={{ background: p.color, boxShadow: `0 0 6px ${p.color}aa` }}
-            title={p.name}
-          />
-        ))}
-      </div>
+            className="absolute -translate-x-1/2 -translate-y-1/2 transition-[left,top] duration-150 ease-out"
+            style={{ left, top }}
+            aria-label={`${p.name} token`}
+          >
+            {/* keyed by tile so each hop replays the bounce */}
+            <div
+              key={idx}
+              className={clsx(
+                "token-hop flex items-center justify-center rounded-full border-2 border-[#131722] text-[0.78rem] leading-none sm:text-base",
+                isCurrent ? "h-7 w-7 sm:h-9 sm:w-9" : "h-6 w-6 opacity-90 sm:h-7 sm:w-7",
+              )}
+              style={{
+                background: `radial-gradient(circle at 32% 28%, #ffffffcc, ${p.color} 55%)`,
+                boxShadow: isCurrent
+                  ? `0 3px 0 rgba(0,0,0,0.35), 0 0 14px ${p.color}cc, 0 0 0 3px ${p.color}55`
+                  : `0 2px 0 rgba(0,0,0,0.3), 0 0 8px ${p.color}66`,
+              }}
+              title={p.name}
+            >
+              {p.emoji}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -202,7 +233,7 @@ export default function Board() {
     <div className="no-scrollbar w-full overflow-x-auto">
       <div className="mx-auto w-full min-w-[520px] max-w-[760px] px-1">
         <div
-          className="grid aspect-square w-full grid-cols-7 grid-rows-7 gap-[3px] rounded-2xl border-[3px] border-[#131722] p-[5px]"
+          className="relative grid aspect-square w-full grid-cols-7 grid-rows-7 gap-[3px] rounded-2xl border-[3px] border-[#131722] p-[5px]"
           style={{
             background:
               "radial-gradient(circle at 50% 32%, rgba(255,255,255,0.5), transparent 42%), linear-gradient(150deg, #F2E9D2, #E2D5B4)",
@@ -255,6 +286,8 @@ export default function Board() {
               Month {Math.min(game.month + 1, game.maxMonths)} of {game.maxMonths}
             </div>
           </div>
+
+          <TokenLayer state={game} />
         </div>
       </div>
     </div>

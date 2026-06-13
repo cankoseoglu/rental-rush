@@ -135,9 +135,9 @@ export const useGame = create<Store>()((set, get) => {
         dp[pid] = step;
         return { ui: { ...s.ui, displayPos: dp } };
       });
-      await sleep(105);
+      await sleep(175);
     }
-    await sleep(160);
+    await sleep(220);
   };
 
   const forceResolve = (g: GameState): Action => {
@@ -166,6 +166,8 @@ export const useGame = create<Store>()((set, get) => {
       const isBotNow = !g.players[g.current].isHuman || get_().ui.autoplay;
       if (!isBotNow) {
         const h = g.pendingQueue[0];
+        // let the landed token register before the panel slides up
+        if (h.kind === "area") await sleep(240);
         set((s) => ({
           ui: {
             ...s.ui,
