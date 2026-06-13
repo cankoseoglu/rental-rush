@@ -21,6 +21,7 @@ const splineMono = Spline_Sans_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://playrentalrush.com"),
   title: "Rental Rush: Operator Mode",
   description:
     "Claim neighbourhoods, lease buildings and run them as STR, MTR, LTR or Hotel Mode. Survive a tightening market, squeeze two AI rivals with stay fees and auctions, and be the last solvent operator standing.",
@@ -28,6 +29,8 @@ export const metadata: Metadata = {
     title: "Rental Rush: Operator Mode",
     description: "Outlast two AI rivals and be the last solvent operator standing. Can you?",
     type: "website",
+    url: "https://playrentalrush.com",
+    siteName: "Rental Rush",
   },
 };
 

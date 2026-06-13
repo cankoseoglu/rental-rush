@@ -21,7 +21,7 @@ a fully headless, testable game engine.
 
 ## Play
 
-▶️ **Live: [rental-rush.vercel.app](https://rental-rush.vercel.app)**
+▶️ **Live: [playrentalrush.com](https://playrentalrush.com)**
 
 ## Run it locally
 
