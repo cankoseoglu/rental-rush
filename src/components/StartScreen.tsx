@@ -11,8 +11,8 @@ const GITHUB = "https://github.com/cankoseoglu/rental-rush";
 const SITE = "https://cankoseoglu.com";
 
 const STEPS = [
-  { emoji: "🎲", title: "Claim areas, charge fees", body: "16 neighbourhoods. Control the turf and rivals pay you every time they land — fees only grow." },
-  { emoji: "🔨", title: "Fight at auction", body: "Units, buildings, owner mandates, permits — and the carcasses of bankrupt rivals." },
+  { emoji: "🎲", title: "Claim areas, charge fees", body: "16 neighbourhoods. Control the turf and rivals pay you every time they land. Those fees only grow." },
+  { emoji: "🔨", title: "Fight at auction", body: "Units, buildings, owner mandates, permits, and the carcasses of bankrupt rivals." },
   { emoji: "📉", title: "Outlast the market", body: "A market-cycle deck tightens every month: rates, crackdowns, funding winters, consolidation." },
   { emoji: "💀", title: "Bankrupt them all", body: "No points, no final score. The last solvent operator standing takes everything." },
 ];
@@ -22,7 +22,7 @@ const VENTURES: Array<{ year: string; name: string; emoji: string; blurb: string
   { year: "2015", name: "Erasmusinn", emoji: "🎓", blurb: "A student-housing marketplace that grew to around ten thousand rooms. Backed by 500 Startups." },
   { year: "2019", name: "Oval Experiences", emoji: "🏙️", blurb: "Bootstrapped, running about sixty short-let apartments. Where I learned how quickly an operation falls over." },
   { year: "", name: "Fullog", emoji: "📦", blurb: "The same playbook in fulfilment: arbitraging space and running the logistics on top of it." },
-  { year: "2024", name: "Cendra", emoji: "🤖", blurb: "What I'm building now — AI for the messy, human side of running rentals." },
+  { year: "2024", name: "Cendra", emoji: "🤖", blurb: "What I'm building now: AI for the messy, human side of running rentals." },
 ];
 
 function GitHubMark({ className }: { className?: string }) {
@@ -91,7 +91,7 @@ export default function StartScreen() {
               · Operator Mode ·
             </div>
             <p className="text-balance mx-auto mt-4 max-w-sm text-[0.92rem] leading-relaxed text-cream-50/75">
-              Claim neighbourhoods, stack units, lease buildings, flip them to Hotel Mode — and squeeze
+              Claim neighbourhoods, stack units, lease buildings, flip them to Hotel Mode, then squeeze
               your rivals with stay fees and auctions until they fold. Last solvent operator wins.
             </p>
           </motion.div>
