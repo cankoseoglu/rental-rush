@@ -29,7 +29,7 @@ export default function GameScreen() {
 
   return (
     <div className="min-h-dvh" data-testid="game-screen">
-      <div className="mx-auto flex max-w-[1280px] flex-col gap-2.5 pb-32 pt-2 lg:grid lg:grid-cols-[1fr_410px] lg:items-start lg:gap-4 lg:px-4">
+      <div className="mx-auto flex max-w-[1600px] flex-col gap-2.5 pb-32 pt-2 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(340px,380px)] lg:items-start lg:gap-5 lg:px-5">
         {/* left column: chrome + board */}
         <div className="flex min-w-0 flex-col gap-2.5">
           <div className="flex w-full items-center justify-between px-3 lg:px-0">
