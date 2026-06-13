@@ -11,6 +11,7 @@ import { createGame, dispatch, fastForwardToEnd, type Action } from "./game/engi
 import { botActionsFor } from "./game/bots";
 import { loadGame, saveGame, clearSave } from "./game/save";
 import { todayKey } from "./game/leaderboard";
+import * as audio from "./audio";
 
 export interface Toast {
   id: number;
@@ -35,6 +36,7 @@ interface UI {
   autoplay: boolean;
   speed: number;
   banner: string | null;
+  soundMuted: boolean;
 }
 
 interface Store {
@@ -47,6 +49,7 @@ interface Store {
   quitToMenu: () => void;
   setSpeed: (s: number) => void;
   setAutoplay: (v: boolean) => void;
+  toggleSound: () => void;
   openSheet: (s: SheetKind, rivalId?: number) => void;
   selectArea: (areaId: string | null) => void;
   roll: () => Promise<void>;
@@ -70,6 +73,7 @@ const initialUI = (): UI => ({
   autoplay: false,
   speed: 1,
   banner: null,
+  soundMuted: false,
 });
 
 const reducedMotion = () =>
@@ -126,15 +130,18 @@ export const useGame = create<Store>()((set, get) => {
     const pid = g.current;
     const [a, b] = g.lastRoll ?? [3, 4];
     set((s) => ({ ui: { ...s.ui, dice: { a, b, rolling: true } } }));
+    audio.playDice();
     await sleep(700);
     set((s) => ({ ui: { ...s.ui, dice: { a, b, rolling: false } } }));
     await sleep(150);
+    let hop = 0;
     for (const step of g.lastPath) {
       set((s) => {
         const dp = [...s.ui.displayPos];
         dp[pid] = step;
         return { ui: { ...s.ui, displayPos: dp } };
       });
+      audio.playHop(hop++);
       await sleep(175);
     }
     await sleep(220);
@@ -281,7 +288,8 @@ export const useGame = create<Store>()((set, get) => {
     ui: initialUI(),
     hasSave: false,
 
-    checkSave: () => set({ hasSave: loadGame() !== null }),
+    checkSave: () =>
+      set((s) => ({ hasSave: loadGame() !== null, ui: { ...s.ui, soundMuted: audio.loadMutePref() } })),
 
     newGame: (mode, seedOverride) => {
       const seedText =
@@ -293,18 +301,21 @@ export const useGame = create<Store>()((set, get) => {
         dailyKey: mode === "daily" ? todayKey() : undefined,
       });
       logCursor = 0;
-      set({
+      set((s) => ({
         game,
         ui: {
           ...initialUI(),
           screen: "game",
-          autoplay: get().ui.autoplay,
-          speed: get().ui.speed,
+          autoplay: s.ui.autoplay,
+          speed: s.ui.speed,
+          soundMuted: s.ui.soundMuted,
         },
-      });
+      }));
       syncTokens();
       pushToasts();
       saveGame(game);
+      audio.initAudio();
+      audio.startBackground();
       void pump();
     },
 
@@ -312,19 +323,32 @@ export const useGame = create<Store>()((set, get) => {
       const game = loadGame();
       if (!game) return;
       logCursor = game.log.length;
-      set({ game, ui: { ...initialUI(), screen: "game" } });
+      set((s) => ({ game, ui: { ...initialUI(), screen: "game", soundMuted: s.ui.soundMuted } }));
       syncTokens();
+      audio.initAudio();
+      audio.startBackground();
       void pump();
     },
 
     quitToMenu: () => {
       const g = get().game;
       if (g && !g.over) saveGame(g);
+      audio.stopBackground();
       set({ ui: { ...get().ui, screen: "menu", sheet: null }, hasSave: loadGame() !== null });
     },
 
     setSpeed: (speed) => set((s) => ({ ui: { ...s.ui, speed } })),
     setAutoplay: (autoplay) => set((s) => ({ ui: { ...s.ui, autoplay } })),
+
+    toggleSound: () => {
+      const next = !get().ui.soundMuted;
+      audio.setMuted(next);
+      if (!next) {
+        audio.initAudio();
+        if (get().ui.screen === "game") audio.startBackground();
+      }
+      set((s) => ({ ui: { ...s.ui, soundMuted: next } }));
+    },
 
     openSheet: (sheet, rivalId) =>
       set((s) => ({ ui: { ...s.ui, sheet, rivalId: rivalId ?? null } })),
@@ -336,6 +360,7 @@ export const useGame = create<Store>()((set, get) => {
       if (!game || game.over || ui.busy) return;
       const p = game.players[game.current];
       if (!p.isHuman || game.phase !== "awaitRoll" || game.pendingQueue.length) return;
+      audio.initAudio(); // resume the context on this gesture
       set((s) => ({ ui: { ...s.ui, busy: true, selectedAreaId: null, sheet: null } }));
       dispatch(game, { t: "ROLL" });
       pushToasts();

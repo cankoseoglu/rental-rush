@@ -12,6 +12,7 @@ export default function GameScreen() {
   const game = useGame((s) => s.game);
   const ui = useGame((s) => s.ui);
   const setSpeed = useGame((s) => s.setSpeed);
+  const toggleSound = useGame((s) => s.toggleSound);
   const quitToMenu = useGame((s) => s.quitToMenu);
   const selectArea = useGame((s) => s.selectArea);
   if (!game) return null;
@@ -34,6 +35,14 @@ export default function GameScreen() {
             </button>
             <div className="flex items-center gap-1.5">
               {ui.autoplay && <span className="chip text-amber-400">autopilot</span>}
+              <button
+                onClick={toggleSound}
+                className="chip text-cream-50/70"
+                aria-label={ui.soundMuted ? "unmute sound" : "mute sound"}
+                aria-pressed={!ui.soundMuted}
+              >
+                {ui.soundMuted ? "🔇" : "🔊"}
+              </button>
               <button onClick={() => setSpeed(ui.speed === 1 ? 2 : 1)} className="chip text-cream-50/70" aria-label="toggle game speed">
                 {ui.speed === 1 ? "1×" : "2×"} ⏩
               </button>
