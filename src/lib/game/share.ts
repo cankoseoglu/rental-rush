@@ -161,7 +161,7 @@ export async function drawShareCard(data: ShareData): Promise<HTMLCanvasElement>
     ["Empire score", gbpFull(data.result.score.total)],
     ["Monthly NOI", `${gbpFull(data.result.score.noi)}/mo`],
     ["Strategy", data.result.strategyLabel],
-    ["Owned / managed", `${data.result.propertiesOwned} / ${data.result.managedUnits}`],
+    ["Live units / areas", `${data.result.unitsLive} / ${data.result.areasControlled}`],
   ];
   const cellW = (S - 120 - 24) / 2;
   const cellH = 118;

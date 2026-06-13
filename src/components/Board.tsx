@@ -1,126 +1,260 @@
 "use client";
 
+// The square board: 24 tiles around a 7×7 cardboard grid. Tiles stay quiet —
+// colour band, name, £ level, owner pills, model badges, pipeline chips,
+// tokens. Everything deeper lives in the area panel.
+
 import { useGame } from "@/lib/store";
-import { TILE_TINT } from "@/lib/game/data/board";
-import { MONTH_NAMES } from "@/lib/game/types";
-import { seasonLabel } from "@/lib/game/data/cities";
+import { tileGridPos, MODEL_COLORS } from "@/lib/game/data/areas";
+import { cityById, seasonLabel } from "@/lib/game/data/cities";
+import { MONTH_NAMES, type Asset, type GameState, type Tile } from "@/lib/game/types";
+import { areaById } from "@/lib/game/engine/sim";
 import Dice from "./Dice";
 import clsx from "clsx";
 
-const RADIUS = 43; // % from centre
-const TILE = 14.5; // % tile size
+const levelLabel = (l: number) => "£".repeat(l);
 
-function tilePos(idx: number, count: number) {
-  const deg = (idx / count) * 360 - 90;
-  const rad = (deg * Math.PI) / 180;
-  return {
-    left: `${50 + RADIUS * Math.cos(rad)}%`,
-    top: `${50 + RADIUS * Math.sin(rad)}%`,
-  };
+function pipelineBadges(state: GameState, areaId: string) {
+  const badges: Array<{ text: string; color: string; title: string }> = [];
+  for (const p of state.players) {
+    for (const a of p.assets) {
+      if (a.areaId !== areaId) continue;
+      if (a.status === "prep")
+        badges.push({ text: `BUILD ${a.monthsToLive}M`, color: p.color, title: `${p.name}: building prep` });
+      else if (a.status === "furnishing")
+        badges.push({ text: `FURN ${a.monthsToLive}M`, color: p.color, title: `${p.name}: furnishing` });
+      if (a.licence === "applied")
+        badges.push({ text: `LIC ${a.licenceMonths}M`, color: p.color, title: `${p.name}: licence pending` });
+    }
+  }
+  return badges.slice(0, 2);
 }
 
-const TOKEN_OFFSET = [
-  { x: -11, y: -11 },
-  { x: 11, y: -7 },
-  { x: 0, y: 12 },
-];
+function ownerPills(state: GameState, areaId: string) {
+  return state.players
+    .map((p) => ({
+      p,
+      units: p.assets.reduce((s, a) => (a.areaId === areaId ? s + a.units : s), 0),
+    }))
+    .filter((x) => x.units > 0 && !x.p.bankrupt);
+}
+
+function modelChips(state: GameState, areaId: string) {
+  const counts = new Map<string, number>();
+  for (const p of state.players) {
+    for (const a of p.assets) {
+      if (a.areaId !== areaId || a.status !== "live") continue;
+      counts.set(a.model, (counts.get(a.model) ?? 0) + a.units);
+    }
+  }
+  return [...counts.entries()];
+}
+
+function AreaTile({ tile, state }: { tile: Tile; state: GameState }) {
+  const ui = useGame((s) => s.ui);
+  const selectArea = useGame((s) => s.selectArea);
+  const area = areaById(state, tile.areaId!);
+  const city = cityById(area.cityId);
+  const controllerId = state.control[area.id];
+  const controller = controllerId !== null && controllerId !== undefined ? state.players[controllerId] : null;
+  const pills = ownerPills(state, area.id);
+  const chips = modelChips(state, area.id);
+  const pipes = pipelineBadges(state, area.id);
+  const tokens = state.players.filter((p) => !p.bankrupt && ui.displayPos[p.id] === tile.idx);
+  const isLanding = ui.displayPos[state.current] === tile.idx && ui.busy;
+  const selected = ui.selectedAreaId === area.id;
+
+  return (
+    <button
+      onClick={() => selectArea(area.id)}
+      title={`${area.name}, ${city.name}`}
+      className={clsx(
+        "relative flex min-w-0 flex-col overflow-hidden rounded-[5px] border-2 border-[#131722] bg-gradient-to-b from-[#FDF8EC] to-[#F4EBD4] text-creamink transition-transform",
+        isLanding && "tile-active z-10 scale-[1.07]",
+        selected && "z-10 ring-2 ring-lime-400 ring-offset-1 ring-offset-[#131722]",
+      )}
+      style={
+        controller
+          ? { boxShadow: `inset 0 0 0 2.5px ${controller.color}cc, 0 2px 0 rgba(0,0,0,0.25)` }
+          : { boxShadow: "0 2px 0 rgba(0,0,0,0.25)" }
+      }
+    >
+      <div
+        className="h-[7px] w-full shrink-0 border-b-2 border-[#131722]"
+        style={{ background: `hsl(${city.hue} 70% 48%)` }}
+      />
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-start gap-[2px] px-[2px] pt-[2px]">
+        <div className="font-display w-full text-center text-[0.42rem] font-extrabold uppercase leading-[1.05] tracking-tight sm:text-[0.52rem]">
+          {area.name}
+        </div>
+        <div className="font-ledger text-[0.42rem] font-bold text-creamink/55 sm:text-[0.5rem]">
+          {levelLabel(area.level)}
+        </div>
+        {pills.length > 0 ? (
+          <div className="flex flex-wrap items-center justify-center gap-[2px]">
+            {pills.map(({ p, units }) => (
+              <span
+                key={p.id}
+                title={`${p.name}: ${units} unit${units > 1 ? "s" : ""}`}
+                className="rounded-full border border-[#131722] px-[3px] text-[0.42rem] font-extrabold leading-[1.3] text-[#131722] sm:text-[0.5rem]"
+                style={{ background: p.color }}
+              >
+                {p.name[0]}
+                {units}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <span className="rounded-full border border-creamink/25 px-[4px] text-[0.4rem] font-bold uppercase text-creamink/40 sm:text-[0.46rem]">
+            open
+          </span>
+        )}
+        {chips.length > 0 && (
+          <div className="flex flex-wrap items-center justify-center gap-[2px]">
+            {chips.slice(0, 3).map(([model, units]) => (
+              <span
+                key={model}
+                title={`${units} ${model} unit${units > 1 ? "s" : ""} live`}
+                className="rounded-[3px] px-[3px] text-[0.4rem] font-extrabold leading-[1.35] text-white sm:text-[0.46rem]"
+                style={{ background: MODEL_COLORS[model] }}
+              >
+                {model === "HOTEL" ? "H" : model[0]}
+                {units}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+      {/* pipeline + tokens footer */}
+      <div className="flex h-[12px] w-full shrink-0 items-end justify-between px-[2px] pb-[2px]">
+        <div className="flex gap-[2px]">
+          {pipes.map((b, i) => (
+            <span
+              key={i}
+              title={b.title}
+              className="rounded-[3px] border border-[#131722] bg-amber-400 px-[2px] text-[0.36rem] font-extrabold leading-[1.4] text-[#131722] sm:text-[0.42rem]"
+              style={{ borderLeftWidth: 3, borderLeftColor: b.color }}
+            >
+              {b.text}
+            </span>
+          ))}
+        </div>
+        <div className="flex gap-[2px]">
+          {tokens.map((p) => (
+            <span
+              key={p.id}
+              className="pop-in h-[9px] w-[9px] rounded-full border-[1.5px] border-[#131722] sm:h-[11px] sm:w-[11px]"
+              style={{ background: p.color, boxShadow: `0 0 6px ${p.color}aa` }}
+              title={p.name}
+            />
+          ))}
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function SpecialTile({ tile, state }: { tile: Tile; state: GameState }) {
+  const ui = useGame((s) => s.ui);
+  const tokens = state.players.filter((p) => !p.bankrupt && ui.displayPos[p.id] === tile.idx);
+  const isLanding = ui.displayPos[state.current] === tile.idx && ui.busy;
+  const corner = tile.kind === "corner" || tile.kind === "start";
+  return (
+    <div
+      title={tile.label}
+      className={clsx(
+        "relative flex min-w-0 flex-col items-center justify-center gap-[2px] overflow-hidden rounded-[5px] border-2 border-[#131722] p-[2px] text-center",
+        tile.kind === "start"
+          ? "bg-gradient-to-b from-[#DEF3A8] to-[#C8E882]"
+          : corner
+            ? "bg-gradient-to-b from-[#EFDFAF] to-[#E4CD8C]"
+            : "bg-gradient-to-b from-[#E7E2D2] to-[#DAD2BB]",
+        isLanding && "tile-active z-10 scale-[1.07]",
+      )}
+      style={{ boxShadow: "0 2px 0 rgba(0,0,0,0.25)" }}
+    >
+      <span className="text-sm leading-none sm:text-lg">{tile.emoji}</span>
+      <span className="font-display text-[0.4rem] font-extrabold uppercase leading-[1.05] text-[#131722] sm:text-[0.5rem]">
+        {tile.label}
+      </span>
+      <div className="absolute bottom-[2px] right-[2px] flex gap-[2px]">
+        {tokens.map((p) => (
+          <span
+            key={p.id}
+            className="pop-in h-[9px] w-[9px] rounded-full border-[1.5px] border-[#131722] sm:h-[11px] sm:w-[11px]"
+            style={{ background: p.color, boxShadow: `0 0 6px ${p.color}aa` }}
+            title={p.name}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export default function Board() {
   const game = useGame((s) => s.game);
   const ui = useGame((s) => s.ui);
   if (!game) return null;
-
-  const human = game.players[0];
   const current = game.players[game.current];
-  const monthIdx = human.monthsDone;
-  const month = MONTH_NAMES[monthIdx % MONTH_NAMES.length];
-  const landingTile = ui.displayPos[game.current];
+  const monthIdx = game.month % MONTH_NAMES.length;
 
   return (
-    <div className="relative mx-auto aspect-square w-[min(94vw,440px)] select-none md:w-[min(46vw,560px)]">
-      {/* felt ring */}
-      <div
-        className="absolute inset-[6%] rounded-full border border-line/60"
-        style={{
-          background:
-            "radial-gradient(circle at 50% 38%, rgba(31,48,80,0.55), rgba(10,16,28,0.9) 70%)",
-          boxShadow: "inset 0 0 60px rgba(0,0,0,0.55)",
-        }}
-      />
-      <div className="absolute inset-[20%] rounded-full border border-dashed border-line/40" />
+    <div className="no-scrollbar w-full overflow-x-auto">
+      <div className="mx-auto w-full min-w-[520px] max-w-[760px] px-1">
+        <div
+          className="grid aspect-square w-full grid-cols-7 grid-rows-7 gap-[3px] rounded-2xl border-[3px] border-[#131722] p-[5px]"
+          style={{
+            background:
+              "radial-gradient(circle at 50% 32%, rgba(255,255,255,0.5), transparent 42%), linear-gradient(150deg, #F2E9D2, #E2D5B4)",
+            boxShadow:
+              "0 14px 0 rgba(0,0,0,0.3), 0 32px 60px rgba(0,0,0,0.35), inset 0 0 0 3px rgba(255,255,255,0.5)",
+          }}
+        >
+          {game.tiles.map((tile) => {
+            const pos = tileGridPos(tile.idx);
+            return (
+              <div key={tile.idx} style={{ gridRow: pos.row, gridColumn: pos.col }} className="min-h-0 min-w-0">
+                {tile.kind === "area" ? (
+                  <div className="h-full w-full [&>button]:h-full [&>button]:w-full">
+                    <AreaTile tile={tile} state={game} />
+                  </div>
+                ) : (
+                  <SpecialTile tile={tile} state={game} />
+                )}
+              </div>
+            );
+          })}
 
-      {/* tiles */}
-      {game.tiles.map((tile) => {
-        const pos = tilePos(tile.idx, game.tiles.length);
-        const isLanding = landingTile === tile.idx && ui.busy;
-        const tint = TILE_TINT[tile.kind];
-        return (
+          {/* centre console */}
           <div
-            key={tile.idx}
-            title={tile.label}
-            className={clsx(
-              "absolute z-10 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-2xl border transition-transform",
-              tile.kind === "start"
-                ? "border-lime-400/70 bg-lime-400/10"
-                : "border-white/8 bg-ink-800/95",
-              isLanding && "tile-active scale-110",
-            )}
+            className="z-0 m-[2px] flex flex-col items-center justify-center gap-1.5 rounded-xl border-[3px] border-[#131722] px-2 text-center"
             style={{
-              ...pos,
-              width: `${tile.kind === "start" ? TILE + 2 : TILE}%`,
-              height: `${tile.kind === "start" ? TILE + 2 : TILE}%`,
-              boxShadow: "0 8px 18px -8px rgba(0,0,0,0.7)",
+              gridRow: "2 / 7",
+              gridColumn: "2 / 7",
+              background:
+                "radial-gradient(circle at 50% 28%, rgba(255,255,255,0.65), transparent 38%), linear-gradient(140deg, #EFDFB6, #D9C188)",
             }}
           >
-            <span className="text-base leading-none sm:text-lg">{tile.emoji}</span>
-            <span
-              className="mt-1 h-1 w-4 rounded-full opacity-80"
-              style={{ background: tint }}
-            />
+            <div className="font-display text-xl font-extrabold tracking-tighter text-[#131722] sm:text-3xl">
+              RENTAL<span className="text-[#4f8a00]">RUSH</span>
+            </div>
+            <div className="rounded-full border-2 border-[#131722] bg-[#FDF8EC] px-2.5 py-0.5 font-ledger text-[0.6rem] font-bold uppercase tracking-wider text-[#131722] sm:text-[0.7rem]">
+              {MONTH_NAMES[monthIdx]} · {seasonLabel(monthIdx)}
+            </div>
+            <Dice a={ui.dice.a} b={ui.dice.b} rolling={ui.dice.rolling} />
+            <div className="min-h-[2em] max-w-[220px] text-[0.72rem] font-bold leading-tight text-[#131722]/85">
+              {ui.banner ? (
+                ui.banner
+              ) : current.isHuman ? (
+                <span className="text-[#3c6e00]">Your move, operator</span>
+              ) : (
+                `${current.name}'s move`
+              )}
+            </div>
+            <div className="rounded-full border-2 border-[#131722]/30 px-2 py-0.5 text-[0.58rem] font-bold uppercase tracking-wider text-[#131722]/60">
+              Month {Math.min(game.month + 1, game.maxMonths)} of {game.maxMonths}
+            </div>
           </div>
-        );
-      })}
-
-      {/* tokens */}
-      {game.players.map((p) => {
-        if (p.bankrupt) return null;
-        const pos = tilePos(ui.displayPos[p.id] ?? p.pos, game.tiles.length);
-        const off = TOKEN_OFFSET[p.id];
-        return (
-          <div
-            key={p.id}
-            className="absolute z-20 flex h-[18px] w-[18px] items-center justify-center rounded-full border-2 border-ink-950 text-[9px] font-extrabold text-ink-900 transition-all duration-150 ease-out"
-            style={{
-              left: `calc(${pos.left} + ${off.x}px)`,
-              top: `calc(${pos.top} + ${off.y}px)`,
-              transform: "translate(-50%, -50%)",
-              background: p.color,
-              boxShadow: `0 0 10px ${p.color}66`,
-            }}
-            aria-label={`${p.name} token`}
-          >
-            {p.name[0]}
-          </div>
-        );
-      })}
-
-      {/* centre console */}
-      <div className="absolute inset-[24%] z-10 flex flex-col items-center justify-center gap-2 rounded-full text-center">
-        <div className="chip font-ledger text-[0.66rem] uppercase tracking-wider text-cream-50/80">
-          {month} · {seasonLabel(monthIdx)}
-        </div>
-        <Dice a={ui.dice.a} b={ui.dice.b} rolling={ui.dice.rolling} />
-        <div className="min-h-[2.1em] px-3 text-[0.78rem] font-semibold leading-tight text-cream-50/90">
-          {ui.banner ? (
-            <span className="opacity-90">{ui.banner}</span>
-          ) : current.isHuman ? (
-            <span className="text-lime-300">Your roll, operator</span>
-          ) : (
-            <span>{current.name}&apos;s turn</span>
-          )}
-        </div>
-        <div className="chip text-[0.64rem] text-cream-50/60">
-          Turn {Math.min(human.turnsDone + 1, game.maxTurns)}/{game.maxTurns}
         </div>
       </div>
     </div>

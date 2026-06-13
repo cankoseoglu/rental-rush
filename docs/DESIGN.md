@@ -1,71 +1,73 @@
-# Rental Rush: Operator Mode — design notes
+# Rental Rush: Operator Mode — design notes (V2 · area control)
 
-A 8–12 minute property-operator board game. 1 human vs 2 AI rivals. Not a
-Monopoly clone: no auctions, no rent-on-landing, no jail — the core loop is a
-rental-operations P&L simulation wearing a board game costume.
+A 8–12 minute property-operator board game. 1 human vs 2 AI rivals. Square
+24-tile board, but not a Monopoly clone: tiles are NEIGHBOURHOODS that several
+players build into simultaneously, and the depth lives in a rental-operations
+simulation — pipelines, licences, ops capacity, owner trust, seasonality.
 
-## Core loop
+## Design rule
 
-Roll 2d6 around a 16-tile ring. Tiles: 7 property deals, 2 owner calls,
-2 guest issues, 1 regulation, 1 finance, 1 hiring, 1 market shift, 1 upgrades,
-1 Start/Month-End. Passing Start closes that player's month: a full P&L runs
-(revenue → owner payouts → lease → debt service → staff → maintenance →
-refunds → fines → net). With 2d6 on 16 tiles a lap ≈ 2.3 turns, so a 10-turn
-game simulates ~4–5 months per player.
+The board stays quiet: city colour band, area name, £ level, controller
+border, owner pills (Y3 S1), live model badges (S2 M1 H6), pipeline chips
+(LIC 2M / FURN 1M / BUILD 1M), tokens. Everything deeper — demand, regulation,
+assets, opportunities, impact previews — lives in the side panel (right rail
+on desktop, bottom sheet on mobile). You never open a modal just to see who
+owns an area.
 
-The business year starts in **October**: winter (Nov 0.8, Jan 0.7) hits before
-the spring/summer payoff. STR looks shiny on ADR but bleeds in winter; MTR/LTR
-carry you through; lease-arbitrage STR is the high-wire act, exactly as in the
-spec ("high bankruptcy risk if occupancy drops").
+## Core loop (synchronized months)
 
-## Engine (src/lib/game)
+Each player moves once per month (2d6 around 16 area tiles + 4 event tiles +
+4 corners); after all three move, Month End runs for everyone: revenue, lease
+obligations, debt service, payroll, maintenance & ops, projects & furnishing,
+refunds, fines, stay fees — then pipelines advance and area control updates.
+10 months, October → July: winter bites before the spring payoff.
 
-- `engine/sim.ts` — one function (`simulateHoldingMonth`) prices a holding's
-  month; the same maths powers month-end, the deal-projection UI and bot
-  decisions, so what the player is promised is what the engine delivers.
-- STR: `ADR × 30 × occupancy`, where occupancy = base × season × city demand ×
-  reputation × review factor (scaled by review sensitivity) × regulation drag ×
-  event modifiers − ops-overload penalty. ADR gets furnishing, pricing tools,
-  revenue manager, review and seasonal multipliers.
-- Deals: **buy** (30% deposit + 2% fees, 70% LTV interest-only variable
-  mortgage, equity + 0.4%/mo appreciation), **lease** (setup ≈ deposit +
-  furnishing; monthly = LTR × 1.12), **manage** (cheap onboarding; player books
-  gross, remits `gross − fee − costs` as owner payout; fee 20/15/10% by
-  strategy; trust drives churn at <30 and referrals at ≥80).
-- Ops: STR 2.0 / MTR 1.0 / LTR 0.5 points × property factor vs capacity
-  5 (+3 guest ops, +3 AI ops). Overload cuts occupancy and rolls monthly
-  incident dice (refunds, bad reviews, trust hits).
-- Emergencies fire the moment cash < 0; bankruptcy at < −£50k after measures.
-- All randomness flows through a serialisable mulberry32 state on GameState —
-  daily-challenge games share an identical world.
+## Areas & control
 
-## Scoring
+Areas hold any number of assets from any player. Controller = highest LIVE
+unit value (incumbent keeps ties); the controller's colour rings the tile and
+rivals landing there pay a stay fee (≈£400–1,250 scaled by their live book).
 
-`cash + equity + 12×NOI + owner contract value + reputation value − loan debt
-− risk penalties − bankruptcy penalty − investor cut`. Owner contract value =
-monthly management profit × 10 × trust% × (1 + 0.12 per extra managed door,
-cap 1.6×). Risk penalties target unsecured leverage (not ordinary mortgages),
-end-state ops overload, and unlicensed STR in high-regulation cities.
+## Assets & pipelines
 
-## Bots
+- Kinds: rented unit (arbitrage), bought unit (mortgage + equity), managed
+  owner unit (instant, fee-based, per-asset owner trust, max 2/area — the
+  owner pool is finite), leased building (4–8 units, lease burn from signing,
+  1 month prep + furnishing, the empire move).
+- Furnishing: fast (1mo, cheap, ADR −7%, rating cap 4.6, +30% breakage) vs
+  slow (2–3mo, +60% cost, ADR +8%, occ +4pts, cap 5.0, −20% breakage).
+  Buildings pay fit-out in monthly instalments.
+- Licensing: project pipeline (2–4mo, cost scales with units & regulation,
+  approval odds drop with reg risk, +compliance/+AI-ops help). Rejection →
+  reapply (+12% odds), convert to MTR/LTR, or exit. Unlicensed STR in
+  reg≥60 areas trades at a drag and eats inspection fines; hotels simply
+  cannot open unlicensed.
+- Models: STR / MTR / LTR / HOTEL. Hotel = buildings only, licence + ops
+  staff required, ADR ×1.3, occ +5pts, var 22%, £150/unit overhead, 1.2
+  ops/unit. Ops per live unit: STR 1.0 · HOTEL 1.2 · MTR 0.5 · LTR 0.25
+  against capacity 5 (+3 guest ops, +3 AI ops). Overload cuts occupancy and
+  rolls incident dice.
 
-Maya (aggressive: lease/STR bias, ~£6k cash floor, borrows happily, hires
-late) and Sam (steady: buy/manage bias, £30k floor, compliance buyer, hires
-early). Both score deals with the real projection engine + personality bias +
-noise. Verified over 300-game headless sims: every game terminates, no NaNs,
-P&L identity holds, scores p10/p50/p90 ≈ £120k/£210k/£245k — beatable but not
-free.
+## Verified balance (200-game headless sims)
+
+Every game terminates; P&L identity reconciles; the area-control invariant
+holds. Bot baseline: ~4.7 assets/player, ~7 live units, score p50 ≈ £240k,
+p90 ≈ £305k, mean NOI ≈ +£2.5k/mo, emergencies ≈ 0.1/player. Humans beat it
+with buildings, hotels and staffed-up scale. Tuning lessons encoded in bots:
+price the post-pipeline ops load, average projections across remaining
+seasons, only hire staff the gross can carry, never start a pipeline the
+calendar can't finish.
 
 ## Verification
 
-- `npm run stress` — mechanical tests of the danger paths (emergency, bridge
-  loans, payout delays, bankruptcy-ends-game, owner churn, credit caps).
-- `npm run simulate` — 200 full bot games with invariant assertions.
-- `/?auto=1&fast=1` — in-browser autopilot for end-to-end smoke tests.
-- `/?modals=1&seed=rr-test-2` — deterministic first-roll modal inspection.
+- `npm run stress` — 31 assertions: emergencies, bankruptcy, churn, payout
+  delays, credit caps, control & stay fees, building/licence pipelines,
+  hotel gates.
+- `npm run simulate` — 200 bot games with invariants.
+- `/?auto=1&fast=1` — in-browser autopilot; `/?modals=1&seed=rr2-test-2` —
+  deterministic area-panel inspection.
 
-## V2 / Supabase
+## V2 → V3 (Supabase)
 
-`src/lib/game/leaderboard.ts` hides storage behind `ScoreStore` (currently
-localStorage). Swap in a SupabaseScoreStore + auth without touching the UI.
-GameState is fully serialisable JSON for the same reason.
+`ScoreStore` in `src/lib/game/leaderboard.ts` still hides storage; GameState
+remains fully serialisable JSON.

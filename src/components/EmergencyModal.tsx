@@ -1,11 +1,12 @@
 "use client";
 
-// Cash-crisis modal: bridge loan, fire sales, payout delays, staff cuts,
-// strategy conversions — or the long walk to bankruptcy.
+// Cash-crisis modal V2: bridge loan, fire sales, hand-backs, lease exits,
+// payout delays, staff cuts, calming nightly assets — or the long walk.
 
 import { useState } from "react";
 import { useGame } from "@/lib/store";
 import { creditLeft } from "@/lib/game/engine/reducer";
+import { areaById } from "@/lib/game/engine/sim";
 import { gbp, gbpFull } from "@/lib/game/format";
 import { staffById } from "@/lib/game/data/staff";
 import { BANKRUPT_FLOOR, SELL_FIRE } from "@/lib/game/types";
@@ -22,7 +23,9 @@ export default function EmergencyModal() {
   const bridge = Math.min(needed + 15_000, creditLeft(p));
   const canBridge = bridge >= 5_000;
   const canDelay = (p.lastPnl?.ownerPayouts ?? 0) > 0 && p.owedOwners === 0;
-  const strLeases = p.holdings.filter((h) => h.strategy === "STR");
+  const nightly = p.assets.filter(
+    (a) => (a.model === "STR" || a.model === "HOTEL") && a.status === "live",
+  );
 
   return (
     <Sheet open locked maxW="max-w-lg" tone="danger">
@@ -34,8 +37,7 @@ export default function EmergencyModal() {
           <div>
             <h3 className="font-display text-xl font-bold text-coral-400">Cash crisis</h3>
             <p className="text-[0.74rem] text-cream-50/65">
-              You're at{" "}
-              <span className="font-ledger font-bold text-coral-400">{gbpFull(p.cash)}</span>. Below{" "}
+              You're at <span className="font-ledger font-bold text-coral-400">{gbpFull(p.cash)}</span>. Below{" "}
               {gbpFull(BANKRUPT_FLOOR)} you're done. Claw your way back.
             </p>
           </div>
@@ -43,14 +45,9 @@ export default function EmergencyModal() {
 
         <div className="mt-4 space-y-2">
           {canBridge && (
-            <button
-              onClick={() => act({ t: "LOAN", kind: "bridge", amount: bridge })}
-              className="panel w-full px-4 py-3 text-left"
-            >
+            <button onClick={() => act({ t: "LOAN", kind: "bridge", amount: bridge })} className="panel w-full px-4 py-3 text-left">
               <div className="text-sm font-bold">🌉 Bridge loan +{gbp(bridge)}</div>
-              <div className="text-[0.7rem] text-cream-50/55">
-                2.5%/month interest. Expensive, fast, no questions.
-              </div>
+              <div className="text-[0.7rem] text-cream-50/55">2.5%/month interest. Expensive, fast, no questions.</div>
             </button>
           )}
 
@@ -61,34 +58,34 @@ export default function EmergencyModal() {
             </button>
           )}
 
-          {p.holdings.length > 0 && (
+          {p.assets.length > 0 && (
             <div className="panel px-4 py-3">
-              <div className="mb-1.5 text-sm font-bold">🏷️ Fire-sell / hand back</div>
+              <div className="mb-1.5 text-sm font-bold">🏷️ Fire-sell / hand back / exit</div>
               <div className="space-y-1.5">
-                {p.holdings.map((h) => {
+                {p.assets.map((a) => {
+                  const area = areaById(game, a.areaId);
+                  const label = `${area.name} ${a.kind === "building" ? `block (${a.units}u)` : "unit"}`;
                   const proceeds =
-                    h.deal === "buy"
-                      ? Math.round(h.value * SELL_FIRE) - h.mortgage
-                      : h.deal === "lease"
-                        ? -h.def.leaseMonthly
+                    a.deal === "buy"
+                      ? Math.round(a.value * SELL_FIRE) - a.mortgage
+                      : a.deal === "lease"
+                        ? -a.monthlyFixed
                         : 0;
                   return (
                     <button
-                      key={h.id}
-                      onClick={() => act({ t: "SELL", holdingId: h.id, fire: true })}
+                      key={a.id}
+                      onClick={() => act({ t: "SELL_ASSET", assetId: a.id, fire: true })}
                       className="flex w-full items-center justify-between rounded-xl bg-ink-800/70 px-3 py-2 text-left"
                     >
                       <span className="truncate pr-2 text-[0.74rem] font-semibold">
-                        {h.def.name}
-                        <span className="ml-1 text-[0.62rem] text-cream-50/45">({h.deal})</span>
+                        {label}
+                        <span className="ml-1 text-[0.62rem] text-cream-50/45">
+                          ({a.deal}
+                          {a.deal === "lease" ? ` · ends ${gbp(a.monthlyFixed)}/mo burn` : ""})
+                        </span>
                       </span>
-                      <span
-                        className={clsx(
-                          "font-ledger shrink-0 text-[0.74rem] font-bold",
-                          proceeds > 0 ? "text-lime-300" : "text-cream-50/55",
-                        )}
-                      >
-                        {h.deal === "manage" ? "−5 trust" : `${proceeds >= 0 ? "+" : ""}${gbp(proceeds)}`}
+                      <span className={clsx("font-ledger shrink-0 text-[0.74rem] font-bold", proceeds > 0 ? "text-lime-300" : "text-cream-50/55")}>
+                        {a.deal === "manage" ? "hand back" : `${proceeds >= 0 ? "+" : ""}${gbp(proceeds)}`}
                       </span>
                     </button>
                   );
@@ -104,11 +101,7 @@ export default function EmergencyModal() {
                 {p.staff.map((id) => {
                   const s = staffById(id);
                   return (
-                    <button
-                      key={id}
-                      onClick={() => act({ t: "FIRE", staff: id })}
-                      className="chip text-coral-400"
-                    >
+                    <button key={id} onClick={() => act({ t: "FIRE", staff: id })} className="chip text-coral-400">
                       {s.emoji} {s.name} · save {gbp(s.salary)}/mo
                     </button>
                   );
@@ -117,29 +110,28 @@ export default function EmergencyModal() {
             </div>
           )}
 
-          {strLeases.length > 0 && (
+          {nightly.length > 0 && (
             <div className="panel px-4 py-3">
-              <div className="mb-1.5 text-sm font-bold">🔄 Calm a unit down (£500)</div>
+              <div className="mb-1.5 text-sm font-bold">🔄 Calm a property down (£500/unit)</div>
               <div className="space-y-1.5">
-                {strLeases.map((h) => (
-                  <div key={h.id} className="flex items-center justify-between gap-2">
-                    <span className="truncate text-[0.74rem] font-semibold">{h.def.name}</span>
-                    <span className="flex shrink-0 gap-1">
-                      <button
-                        onClick={() => act({ t: "CONVERT", holdingId: h.id, strategy: "MTR" })}
-                        className="chip text-teal-400"
-                      >
-                        → MTR
-                      </button>
-                      <button
-                        onClick={() => act({ t: "CONVERT", holdingId: h.id, strategy: "LTR" })}
-                        className="chip text-sage-400"
-                      >
-                        → LTR
-                      </button>
-                    </span>
-                  </div>
-                ))}
+                {nightly.map((a) => {
+                  const area = areaById(game, a.areaId);
+                  return (
+                    <div key={a.id} className="flex items-center justify-between gap-2">
+                      <span className="truncate text-[0.74rem] font-semibold">
+                        {area.name} {a.kind === "building" ? `block (${a.units}u)` : "unit"}
+                      </span>
+                      <span className="flex shrink-0 gap-1">
+                        <button onClick={() => act({ t: "SWITCH_MODEL", assetId: a.id, model: "MTR" })} className="chip text-teal-400">
+                          → MTR
+                        </button>
+                        <button onClick={() => act({ t: "SWITCH_MODEL", assetId: a.id, model: "LTR" })} className="chip text-sage-400">
+                          → LTR
+                        </button>
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -152,7 +144,7 @@ export default function EmergencyModal() {
             </button>
           ) : p.cash >= BANKRUPT_FLOOR ? (
             <button onClick={() => act({ t: "EMERGENCY_DONE" })} className="btn-dark h-12 w-full text-sm">
-              Limp on in the red ({gbpFull(p.cash)}) · rep & trust −5
+              Limp on in the red ({gbpFull(p.cash)}) · rep −5
             </button>
           ) : (
             <div className="rounded-2xl bg-coral-500/15 p-3 text-center text-[0.76rem] font-semibold text-coral-400">

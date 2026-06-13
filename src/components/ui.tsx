@@ -1,10 +1,11 @@
 "use client";
 
-// Small shared atoms: Sheet (modal/bottom-sheet), PropertyArt, meters.
+// Shared atoms: Sheet (modal/bottom-sheet), AreaArt, meters, model metadata.
 
 import { AnimatePresence, motion } from "motion/react";
 import type { ReactNode } from "react";
 import clsx from "clsx";
+import type { OpModel } from "@/lib/game/types";
 
 export function Sheet({
   open,
@@ -54,7 +55,7 @@ export function Sheet({
   );
 }
 
-export function PropertyArt({
+export function AreaArt({
   hue,
   emoji,
   className,
@@ -71,14 +72,7 @@ export function PropertyArt({
                      linear-gradient(145deg, hsl(${hue} 55% 26%), hsl(${(hue + 45) % 360} 60% 14%))`,
       }}
     >
-      <div
-        className="absolute inset-0 opacity-30"
-        style={{
-          backgroundImage: "radial-gradient(rgba(255,255,255,0.25) 1px, transparent 1.4px)",
-          backgroundSize: "14px 14px",
-        }}
-      />
-      <span className="relative text-4xl drop-shadow-[0_4px_12px_rgba(0,0,0,0.5)]">{emoji}</span>
+      <span className="relative text-2xl drop-shadow-[0_4px_12px_rgba(0,0,0,0.5)]">{emoji}</span>
     </div>
   );
 }
@@ -105,26 +99,75 @@ export function Bar({
   );
 }
 
-export const STRATEGY_META = {
-  STR: { label: "STR", full: "Short-term lets", color: "#FF8A5C", emoji: "🔥" },
-  MTR: { label: "MTR", full: "Mid-term stays", color: "#59C8DC", emoji: "💼" },
-  LTR: { label: "LTR", full: "Long-term let", color: "#9FD98A", emoji: "🌱" },
-} as const;
+export const MODEL_META: Record<
+  OpModel,
+  { label: string; full: string; color: string; emoji: string; blurb: string }
+> = {
+  STR: {
+    label: "STR",
+    full: "Short-term lets",
+    color: "#FF8A5C",
+    emoji: "🔥",
+    blurb: "Highest revenue, heaviest ops, reviews & regulation bite.",
+  },
+  MTR: {
+    label: "MTR",
+    full: "Mid-term stays",
+    color: "#59C8DC",
+    emoji: "💼",
+    blurb: "Monthly tenants, light vacancies, calm ops.",
+  },
+  LTR: {
+    label: "LTR",
+    full: "Long-term let",
+    color: "#9FD98A",
+    emoji: "🌱",
+    blurb: "Fixed rent, near-zero drama, lowest upside.",
+  },
+  HOTEL: {
+    label: "HOTEL",
+    full: "Hotel Mode",
+    color: "#C9A0FF",
+    emoji: "🛎️",
+    blurb: "Buildings only. Licence + staff required. Prints when it works.",
+  },
+};
 
-export const DEAL_META = {
-  buy: { label: "Buy", emoji: "🏦", blurb: "Big cash down, mortgage, full upside + equity." },
-  lease: { label: "Lease", emoji: "📝", blurb: "Rent it, run it, keep the spread. Fixed monthly bill." },
-  manage: { label: "Manage", emoji: "🤝", blurb: "Run it for the owner. Low cost, fee income, trust matters." },
-} as const;
-
-export function StrategyTag({ s }: { s: keyof typeof STRATEGY_META }) {
-  const m = STRATEGY_META[s];
+export function ModelTag({ m }: { m: OpModel }) {
+  const meta = MODEL_META[m];
   return (
     <span
-      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[0.68rem] font-bold"
-      style={{ background: `${m.color}22`, color: m.color, border: `1px solid ${m.color}55` }}
+      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[0.66rem] font-bold"
+      style={{ background: `${meta.color}22`, color: meta.color, border: `1px solid ${meta.color}55` }}
     >
-      {m.emoji} {m.label}
+      {meta.emoji} {meta.label}
+    </span>
+  );
+}
+
+export function StatusTag({
+  status,
+  monthsToLive,
+  licenceMonths,
+}: {
+  status: string;
+  monthsToLive?: number;
+  licenceMonths?: number;
+}) {
+  const map: Record<string, [string, string]> = {
+    live: ["LIVE", "#B9F33E"],
+    prep: [`BUILD ${monthsToLive ?? "?"}M`, "#FFB454"],
+    furnishing: [`FURN ${monthsToLive ?? "?"}M`, "#FFB454"],
+    awaitingLicence: [`LIC ${licenceMonths && licenceMonths > 0 ? `${licenceMonths}M` : "WAIT"}`, "#C9A0FF"],
+    suspended: ["SUSPENDED", "#FF6F61"],
+  };
+  const [label, color] = map[status] ?? [status.toUpperCase(), "#8aa"];
+  return (
+    <span
+      className="rounded-md px-1.5 py-0.5 text-[0.6rem] font-extrabold tracking-wide"
+      style={{ background: `${color}1f`, color, border: `1px solid ${color}55` }}
+    >
+      {label}
     </span>
   );
 }

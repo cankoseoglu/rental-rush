@@ -1,9 +1,8 @@
 "use client";
 
 // ---------------------------------------------------------------------------
-// Zustand store: holds the GameState, orchestrates turn flow, animations and
-// bot turns. The engine mutates state in place; we shallow-copy the root to
-// re-render. All UI pacing (dice, token hops, bot "thinking") lives here.
+// Zustand store V2: GameState + turn orchestration + area selection.
+// The engine mutates state in place; we shallow-copy the root to re-render.
 // ---------------------------------------------------------------------------
 
 import { create } from "zustand";
@@ -21,27 +20,27 @@ export interface Toast {
 }
 
 type Screen = "menu" | "game" | "over";
-type SheetKind = "portfolio" | "log" | "rival" | null;
+type SheetKind = "empire" | "rival" | "team" | "bank" | "log" | null;
 
 interface UI {
   screen: Screen;
-  busy: boolean; // an animation/bot sequence is running
-  displayPos: number[]; // animated token positions
-  dice: { a: number; b: number; rolling: boolean; show: boolean };
+  busy: boolean;
+  displayPos: number[];
+  dice: { a: number; b: number; rolling: boolean };
   toasts: Toast[];
   sheet: SheetKind;
   rivalId: number | null;
+  selectedAreaId: string | null; // tap-to-inspect any tile
   pendingVisible: boolean;
   autoplay: boolean;
-  speed: number; // 1 normal, 2 fast
-  banner: string | null; // “Maya is plotting…”
+  speed: number;
+  banner: string | null;
 }
 
 interface Store {
   game: GameState | null;
   ui: UI;
   hasSave: boolean;
-  // lifecycle
   checkSave: () => void;
   newGame: (mode: GameMode, seedOverride?: string) => void;
   resume: () => void;
@@ -49,7 +48,7 @@ interface Store {
   setSpeed: (s: number) => void;
   setAutoplay: (v: boolean) => void;
   openSheet: (s: SheetKind, rivalId?: number) => void;
-  // gameplay
+  selectArea: (areaId: string | null) => void;
   roll: () => Promise<void>;
   act: (a: Action) => void;
   dismissToast: (id: number) => void;
@@ -62,10 +61,11 @@ const initialUI = (): UI => ({
   screen: "menu",
   busy: false,
   displayPos: [0, 0, 0],
-  dice: { a: 5, b: 2, rolling: false, show: true },
+  dice: { a: 5, b: 2, rolling: false },
   toasts: [],
   sheet: null,
   rivalId: null,
+  selectedAreaId: null,
   pendingVisible: false,
   autoplay: false,
   speed: 1,
@@ -116,17 +116,18 @@ export const useGame = create<Store>()((set, get) => {
     const g = get().game;
     if (!g) return;
     clearSave();
-    set((s) => ({ ui: { ...s.ui, screen: "over", busy: false, pendingVisible: false, banner: null } }));
+    set((s) => ({
+      ui: { ...s.ui, screen: "over", busy: false, pendingVisible: false, banner: null, sheet: null },
+    }));
   };
 
-  /** Dice + token-hop animation for whoever just rolled. */
   const animateRoll = async () => {
     const g = get().game!;
     const pid = g.current;
     const [a, b] = g.lastRoll ?? [3, 4];
-    set((s) => ({ ui: { ...s.ui, dice: { a, b, rolling: true, show: true } } }));
+    set((s) => ({ ui: { ...s.ui, dice: { a, b, rolling: true } } }));
     await sleep(700);
-    set((s) => ({ ui: { ...s.ui, dice: { a, b, rolling: false, show: true } } }));
+    set((s) => ({ ui: { ...s.ui, dice: { a, b, rolling: false } } }));
     await sleep(150);
     for (const step of g.lastPath) {
       set((s) => {
@@ -134,12 +135,25 @@ export const useGame = create<Store>()((set, get) => {
         dp[pid] = step;
         return { ui: { ...s.ui, displayPos: dp } };
       });
-      await sleep(110);
+      await sleep(105);
     }
-    await sleep(180);
+    await sleep(160);
   };
 
-  /** Bot (or autopilot) plays out its pending queue. */
+  const forceResolve = (g: GameState): Action => {
+    const h = g.pendingQueue[0];
+    switch (h.kind) {
+      case "area":
+        return { t: "CLOSE_AREA" };
+      case "referral":
+        return { t: "REFERRAL", accept: false };
+      case "emergency":
+        return { t: "DECLARE_BANKRUPTCY" };
+      default:
+        return { t: "ACK" };
+    }
+  };
+
   const runPendings = async (asBot: boolean) => {
     const get_ = get;
     let guard = 0;
@@ -149,20 +163,28 @@ export const useGame = create<Store>()((set, get) => {
       const g = get_().game;
       if (!g || g.over) return;
       if (!g.pendingQueue.length) return;
-      if (!asBot) {
-        set((s) => ({ ui: { ...s.ui, pendingVisible: true, busy: false } }));
-        return; // human resolves via modals
+      const isBotNow = !g.players[g.current].isHuman || get_().ui.autoplay;
+      if (!isBotNow) {
+        const h = g.pendingQueue[0];
+        set((s) => ({
+          ui: {
+            ...s.ui,
+            pendingVisible: true,
+            busy: false,
+            banner: null,
+            selectedAreaId: h.kind === "area" ? h.areaId : s.ui.selectedAreaId,
+          },
+        }));
+        return; // human resolves via panel/modals
       }
-      if (guard++ > 60) return;
-      const sig = `${g.current}|${g.pendingQueue[0].kind}|${g.players[g.current].cash}|${g.pendingQueue.length}`;
+      void asBot;
+      if (guard++ > 80) return;
+      const sig = `${g.current}|${g.pendingQueue[0].kind}|${g.players[g.current].cash}|${g.pendingQueue.length}|${g.month}`;
       same = sig === lastSig ? same + 1 : 0;
       lastSig = sig;
-      const actions =
-        same > 10
-          ? ([forceResolve(g)] as Action[]) // stall breaker
-          : botActionsFor(g);
+      const actions = same > 10 ? [forceResolve(g)] : botActionsFor(g);
       for (const a of actions) {
-        await sleep(380);
+        await sleep(360);
         const gg = get_().game;
         if (!gg || gg.over) return;
         dispatch(gg, a);
@@ -176,29 +198,10 @@ export const useGame = create<Store>()((set, get) => {
     }
   };
 
-  const forceResolve = (g: GameState): Action => {
-    const h = g.pendingQueue[0];
-    switch (h.kind) {
-      case "property":
-        return { t: "PASS_DEAL" };
-      case "referral":
-        return { t: "REFERRAL", accept: false };
-      case "emergency":
-        return { t: "DECLARE_BANKRUPTCY" };
-      case "hiring":
-      case "finance":
-      case "upgrade":
-        return { t: "CLOSE_SHOP" };
-      default:
-        return { t: "ACK" };
-    }
-  };
-
-  /** Advance the game until it's the human's await-roll (or game over). */
+  /** Advance the game until it's the human's input (or game over). */
   const pump = async () => {
     const get_ = get;
-    // generous ceiling: a full 30-turn game with retries needs ~150 iterations
-    for (let i = 0; i < 2000; i++) {
+    for (let i = 0; i < 3000; i++) {
       const g = get_().game;
       if (!g) return;
       if (g.over) {
@@ -213,10 +216,16 @@ export const useGame = create<Store>()((set, get) => {
           ui: {
             ...s.ui,
             busy: isBotTurn,
-            banner: isBotTurn && !p.isHuman ? `${p.name} ${p.emoji} is dealing…` : null,
+            banner:
+              isBotTurn && !p.isHuman
+                ? `${p.name} ${p.emoji} is dealing…`
+                : isBotTurn
+                  ? "Autopilot…"
+                  : null,
           },
         }));
         await runPendings(isBotTurn);
+        if (!get_().game?.pendingQueue.length) continue;
         if (!isBotTurn) return;
         continue;
       }
@@ -229,7 +238,8 @@ export const useGame = create<Store>()((set, get) => {
         continue;
       }
 
-      // awaiting a roll
+      if (g.phase !== "awaitRoll") return;
+
       if (!isBotTurn) {
         set((s) => ({ ui: { ...s.ui, busy: false, banner: null, pendingVisible: false } }));
         return;
@@ -237,7 +247,7 @@ export const useGame = create<Store>()((set, get) => {
       set((s) => ({
         ui: { ...s.ui, busy: true, banner: p.isHuman ? "Autopilot…" : `${p.name} ${p.emoji} is plotting…` },
       }));
-      await sleep(550);
+      await sleep(520);
       const gg = get_().game;
       if (!gg || gg.over) continue;
       dispatch(gg, { t: "ROLL" });
@@ -300,6 +310,8 @@ export const useGame = create<Store>()((set, get) => {
     openSheet: (sheet, rivalId) =>
       set((s) => ({ ui: { ...s.ui, sheet, rivalId: rivalId ?? null } })),
 
+    selectArea: (selectedAreaId) => set((s) => ({ ui: { ...s.ui, selectedAreaId } })),
+
     roll: async () => {
       const { game, ui } = get();
       if (!game || game.over || ui.busy) return;
@@ -325,7 +337,6 @@ export const useGame = create<Store>()((set, get) => {
         showOver();
         return;
       }
-      // when the human clears the queue, hand control back to the pump
       if (!g.pendingQueue.length) {
         set((s) => ({ ui: { ...s.ui, pendingVisible: false } }));
         void pump();

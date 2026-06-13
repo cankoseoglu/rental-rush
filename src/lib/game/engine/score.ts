@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Final scoring: Rental Empire Score, archetypes, biggest win / mistake.
+// Final scoring V2: Rental Empire Score over areas & assets.
 // ---------------------------------------------------------------------------
 
 import type {
@@ -12,7 +12,7 @@ import type {
 import { opsCapacity } from "../data/staff";
 import {
   equity,
-  isCompliant,
+  isUnlicensed,
   mgmtMonthlyProfit,
   playerLoad,
   proformaNOI,
@@ -56,7 +56,7 @@ export const ARCHETYPES: Record<
   regulationVictim: {
     name: "Regulation Victim",
     emoji: "⚖️",
-    blurb: "The council read your portfolio before you did. Fines, permits, forced conversions.",
+    blurb: "The council read your portfolio before you did. Fines, permits, rejected licences.",
     hue: 0,
   },
   ownerWhisperer: {
@@ -74,7 +74,7 @@ export const ARCHETYPES: Record<
   boringBillionaire: {
     name: "Boring Billionaire",
     emoji: "🗿",
-    blurb: "Few properties, no drama, obscene equity. You won by refusing to be interesting.",
+    blurb: "Few assets, no drama, obscene equity. You won by refusing to be interesting.",
     hue: 45,
   },
   opsMachine: {
@@ -89,12 +89,13 @@ export function computeScore(state: GameState, p: PlayerState): ScoreBreakdown {
   const eq = equity(p);
   const noi = proformaNOI(p, state);
   const noiValue = 12 * noi;
-  const managed = p.holdings.filter((h) => h.deal === "manage").length;
+  const managed = p.assets.filter((a) => a.deal === "manage");
+  const managedUnits = managed.reduce((s, a) => s + a.units, 0);
   const mgmtProfit = mgmtMonthlyProfit(p, state);
   const ownerContractValue =
-    managed > 0
+    managedUnits > 0
       ? Math.round(
-          mgmtProfit * 10 * (p.trust / 100) * Math.min(1.6, 1 + 0.12 * (managed - 1)),
+          mgmtProfit * 10 * (p.trust / 100) * Math.min(1.6, 1 + 0.12 * (managedUnits - 1)),
         )
       : 0;
   const reputationValue = (p.rep - 50) * 2500;
@@ -107,14 +108,8 @@ export function computeScore(state: GameState, p: PlayerState): ScoreBreakdown {
     unsecured > 0.6 * cushion ? Math.min(90_000, (unsecured - 0.6 * cushion) * 0.6) : 0;
   const over = playerLoad(p) - opsCapacity(p);
   if (over > 0) riskPenalty += over * 12_000;
-  for (const h of p.holdings) {
-    if (
-      h.strategy === "STR" &&
-      h.def.regRisk >= 60 &&
-      !h.licence &&
-      !isCompliant(p, h.def.cityId)
-    )
-      riskPenalty += 8_000;
+  for (const a of p.assets) {
+    if (a.status === "live" && isUnlicensed(state, p, a)) riskPenalty += 8_000 * Math.min(3, a.units);
   }
   if (p.cash < 0) riskPenalty += Math.abs(p.cash) * 0.5;
   riskPenalty = Math.round(riskPenalty);
@@ -142,7 +137,9 @@ export function computeScore(state: GameState, p: PlayerState): ScoreBreakdown {
 
 function pickArchetype(state: GameState, p: PlayerState, score: ScoreBreakdown): ArchetypeId {
   const s = p.stats;
-  const managed = p.holdings.filter((h) => h.deal === "manage").length;
+  const managedUnits = p.assets
+    .filter((a) => a.deal === "manage")
+    .reduce((sum, a) => sum + a.units, 0);
   const totalRev = s.strRevenue + s.mtrRevenue + s.ltrRevenue;
   const strShare = totalRev > 0 ? s.strRevenue / totalRev : 0;
   const calmShare = totalRev > 0 ? (s.mtrRevenue + s.ltrRevenue) / totalRev : 0;
@@ -150,18 +147,19 @@ function pickArchetype(state: GameState, p: PlayerState, score: ScoreBreakdown):
 
   if (p.bankrupt) {
     if (s.peakDebt >= 60_000 || s.bridgeLoans > 0) return "overleveraged";
-    if (s.finesCount >= 2) return "regulationVictim";
+    if (s.finesCount >= 2 || s.licencesRejected >= 2) return "regulationVictim";
     if (p.rep < 45) return "badReviewMagnet";
     return "chaosSurvivor";
   }
   if (s.emergencies > 0) return "chaosSurvivor";
   if (p.rep < 42) return "badReviewMagnet";
-  if (s.finesCount >= 2 && s.finesTotal >= 6_000) return "regulationVictim";
-  if (managed >= 2 && p.trust >= 75) return "ownerWhisperer";
-  if (strShare >= 0.6 && s.strRevenue >= 20_000) return "strKing";
+  if ((s.finesCount >= 2 && s.finesTotal >= 6_000) || s.licencesRejected >= 2)
+    return "regulationVictim";
+  if (strShare >= 0.6 && s.strRevenue >= 25_000 && managedUnits < 4) return "strKing";
+  if (managedUnits >= 4 && p.trust >= 78) return "ownerWhisperer";
   if (opsUsed >= 8 && s.overloadMonths === 0) return "opsMachine";
   if (score.noi >= 9_000) return "cashflowBeast";
-  if (score.total >= 500_000 && p.holdings.length <= 3 && s.emergencies === 0)
+  if (score.total >= 500_000 && p.assets.length <= 3 && s.emergencies === 0)
     return "boringBillionaire";
   if (calmShare >= 0.6) return "safeOperator";
   if (score.noi >= 4_000) return "cashflowBeast";
@@ -172,6 +170,8 @@ function strategyLabel(p: PlayerState): string {
   const s = p.stats;
   const totalRev = s.strRevenue + s.mtrRevenue + s.ltrRevenue;
   if (totalRev === 0) return "Cautious spectator";
+  const hotelUnits = p.assets.filter((a) => a.model === "HOTEL").reduce((x, a) => x + a.units, 0);
+  if (hotelUnits >= 4) return "Hotel Mode mogul";
   const managedFeeShare = s.mgmtFees / Math.max(1, totalRev);
   if (managedFeeShare >= 0.25) return "Management-led";
   if (s.strRevenue / totalRev >= 0.55) return "STR-first";
@@ -180,24 +180,20 @@ function strategyLabel(p: PlayerState): string {
   return "Balanced operator";
 }
 
-function bestAndWorst(p: PlayerState): { win: string; mistake: string } {
+function bestAndWorst(state: GameState, p: PlayerState): { win: string; mistake: string } {
   const candidates = [...p.stats.notables];
-  for (const h of p.holdings) {
-    if (h.cumNet >= 5_000)
-      candidates.push({
-        label: `${h.def.name} printed £${Math.round(h.cumNet / 1000)}k`,
-        value: h.cumNet,
-      });
-    if (h.cumNet <= -2_500)
-      candidates.push({
-        label: `${h.def.name} bled £${Math.round(-h.cumNet / 1000)}k`,
-        value: h.cumNet,
-      });
+  for (const a of p.assets) {
+    const areaName = state.areas.find((ar) => ar.id === a.areaId)?.name ?? "an area";
+    const label = a.kind === "building" ? `The ${areaName} block` : `The ${areaName} unit`;
+    if (a.cumNet >= 5_000)
+      candidates.push({ label: `${label} printed £${Math.round(a.cumNet / 1000)}k`, value: a.cumNet });
+    if (a.cumNet <= -2_500)
+      candidates.push({ label: `${label} bled £${Math.round(-a.cumNet / 1000)}k`, value: a.cumNet });
   }
   const wins = candidates.filter((c) => c.value > 0).sort((a, b) => b.value - a.value);
   const mistakes = candidates.filter((c) => c.value < 0).sort((a, b) => a.value - b.value);
   return {
-    win: wins[0]?.label ?? (p.holdings.length ? "Kept every plate spinning" : "Stayed liquid, stayed alive"),
+    win: wins[0]?.label ?? (p.assets.length ? "Kept every plate spinning" : "Stayed liquid, stayed alive"),
     mistake: mistakes[0]?.label ?? "Played it almost too safe",
   };
 }
@@ -205,7 +201,8 @@ function bestAndWorst(p: PlayerState): { win: string; mistake: string } {
 export function computeResults(state: GameState): FinalResult[] {
   return state.players.map((p) => {
     const score = computeScore(state, p);
-    const { win, mistake } = bestAndWorst(p);
+    const { win, mistake } = bestAndWorst(state, p);
+    const areasControlled = Object.values(state.control).filter((c) => c === p.id).length;
     return {
       playerId: p.id,
       score,
@@ -213,8 +210,10 @@ export function computeResults(state: GameState): FinalResult[] {
       strategyLabel: strategyLabel(p),
       biggestWin: win,
       biggestMistake: mistake,
-      propertiesOwned: p.holdings.filter((h) => h.deal === "buy").length,
-      managedUnits: p.holdings.filter((h) => h.deal === "manage").length,
+      unitsOwned: p.assets.filter((a) => a.deal === "buy").reduce((s, a) => s + a.units, 0),
+      unitsLive: p.assets.filter((a) => a.status === "live").reduce((s, a) => s + a.units, 0),
+      managedUnits: p.assets.filter((a) => a.deal === "manage").reduce((s, a) => s + a.units, 0),
+      areasControlled,
       opsUsed: playerLoad(p),
       opsCap: opsCapacity(p),
     };

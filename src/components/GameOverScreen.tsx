@@ -152,7 +152,8 @@ export default function GameOverScreen() {
         <div className="mx-auto mt-1 max-w-sm text-[0.8rem] leading-snug text-cream-50/70">{arch.blurb}</div>
         <div className="mt-2 flex flex-wrap items-center justify-center gap-1.5">
           <span className="chip">{humanResult.strategyLabel}</span>
-          <span className="chip">🏠 {human.holdings.length} doors</span>
+          <span className="chip">🏠 {humanResult.unitsLive} live units</span>
+          <span className="chip">🚩 {humanResult.areasControlled} areas</span>
           <span className="chip">🤝 {humanResult.managedUnits} managed</span>
           <span className="chip">⚙️ ops {humanResult.opsUsed.toFixed(1)}/{humanResult.opsCap}</span>
         </div>

@@ -1,18 +1,23 @@
 "use client";
 
-// Pending-action modals: routes the head of the pending queue to the right
-// dialog. Only rendered for the human player; bots resolve silently.
+// Blocking-moment modals: month-end P&L, events, referrals, emergencies.
+// Area decisions live in the side panel, not here.
 
 import { motion } from "motion/react";
 import { useGame } from "@/lib/store";
 import type { PendingAction, PnL } from "@/lib/game/types";
 import { gbpFull } from "@/lib/game/format";
+import { areaById } from "@/lib/game/engine/sim";
 import { cityById } from "@/lib/game/data/cities";
-import { Sheet, PropertyArt } from "./ui";
-import DealModal from "./DealModal";
-import { HiringModal, FinanceModal, UpgradeModal } from "./ShopModals";
+import { Sheet, AreaArt } from "./ui";
 import EmergencyModal from "./EmergencyModal";
-import { TILE_TINT } from "@/lib/game/data/board";
+
+const CATEGORY_TINT: Record<string, string> = {
+  guest: "#59C8DC",
+  owner: "#FF7AC3",
+  regulation: "#FF6F61",
+  market: "#6FA8FF",
+};
 
 export default function Modals() {
   const game = useGame((s) => s.game);
@@ -26,20 +31,14 @@ export default function Modals() {
   switch (head.kind) {
     case "monthEnd":
       return <MonthEndModal pnl={head.pnl} />;
-    case "property":
-      return <DealModal card={head.card} key={head.card.id} />;
     case "event":
       return <EventModal pending={head} key={head.eventId + head.choices.length} />;
     case "referral":
       return <ReferralModal pending={head} />;
-    case "hiring":
-      return <HiringModal />;
-    case "finance":
-      return <FinanceModal />;
-    case "upgrade":
-      return <UpgradeModal />;
     case "emergency":
       return <EmergencyModal />;
+    case "area":
+      return null; // handled by the side panel
   }
 }
 
@@ -64,7 +63,7 @@ function Row({
     <motion.div
       initial={{ opacity: 0, x: -10 }}
       animate={{ opacity: 1, x: 0 }}
-      transition={{ delay: 0.06 * i, duration: 0.25 }}
+      transition={{ delay: 0.05 * i, duration: 0.25 }}
       className={`flex items-baseline justify-between ${strong ? "mt-2 border-t-2 border-creamink/20 pt-2" : ""}`}
     >
       <span className={`text-[0.8rem] ${strong ? "font-bold" : "text-creamink/70"}`}>{label}</span>
@@ -88,9 +87,7 @@ function MonthEndModal({ pnl }: { pnl: PnL }) {
       <div className="p-4">
         <div className="card-cream p-5">
           <div className="mb-1 flex items-center justify-between">
-            <span className="font-display text-lg font-bold tracking-tight">
-              {pnl.month} — the books
-            </span>
+            <span className="font-display text-lg font-bold tracking-tight">{pnl.month} — the books</span>
             <span className="rounded-full bg-creamink/8 px-2.5 py-1 text-[0.62rem] font-bold uppercase tracking-wider text-creamink/60">
               {pnl.seasonLabel}
             </span>
@@ -100,13 +97,16 @@ function MonthEndModal({ pnl }: { pnl: PnL }) {
           </div>
           <div className="space-y-1.5">
             <Row label="Rental revenue" value={pnl.revenue} i={i++} />
+            <Row label="Stay fees earned" value={pnl.feesEarned} i={i++} />
             <Row label="Owner payouts" value={pnl.ownerPayouts} i={i++} tone="cost" />
             <Row label="Lease obligations" value={pnl.lease} i={i++} tone="cost" />
             <Row label="Mortgage & debt service" value={pnl.debtService} i={i++} tone="cost" />
             <Row label="Staff overhead" value={pnl.staffCost} i={i++} tone="cost" />
             <Row label="Maintenance & ops" value={pnl.maintenance} i={i++} tone="cost" />
+            <Row label="Projects & furnishing" value={pnl.projects} i={i++} tone="cost" />
             <Row label="Refunds" value={pnl.refunds} i={i++} tone="cost" />
             <Row label="Fines" value={pnl.fines} i={i++} tone="cost" />
+            <Row label="Stay fees paid" value={pnl.feesPaid} i={i++} tone="cost" />
             <Row label="Net cash flow" value={pnl.net} i={i++} strong />
           </div>
 
@@ -129,7 +129,7 @@ function MonthEndModal({ pnl }: { pnl: PnL }) {
 
           {pnl.notes.length > 0 && (
             <ul className="mt-3 space-y-1 border-t border-dashed border-creamink/20 pt-2">
-              {pnl.notes.slice(0, 4).map((n, idx) => (
+              {pnl.notes.slice(0, 5).map((n, idx) => (
                 <li key={idx} className="text-[0.72rem] leading-snug text-creamink/70">
                   · {n}
                 </li>
@@ -140,13 +140,17 @@ function MonthEndModal({ pnl }: { pnl: PnL }) {
           {pnl.lines.length > 0 && (
             <details className="mt-3">
               <summary className="cursor-pointer text-[0.72rem] font-bold text-creamink/60">
-                Per-property detail
+                Per-asset detail
               </summary>
               <div className="mt-2 space-y-1.5">
                 {pnl.lines.map((l, idx) => (
                   <div key={idx} className="flex items-center justify-between text-[0.72rem]">
                     <span className="truncate pr-2 text-creamink/80">
-                      {l.name} <span className="opacity-50">· {l.strategy}{l.strategy === "STR" ? ` ${Math.round(l.occ * 100)}%` : ""}</span>
+                      {l.name}{" "}
+                      <span className="opacity-50">
+                        · {l.units}u {l.model}
+                        {l.status !== "live" ? ` · ${l.status}` : l.model === "STR" || l.model === "HOTEL" ? ` ${Math.round(l.occ * 100)}%` : ""}
+                      </span>
                     </span>
                     <span className={`font-ledger font-semibold ${l.net < 0 ? "text-coral-500" : ""}`}>
                       {l.net < 0 ? "−" : "+"}£{Math.abs(l.net).toLocaleString("en-GB")}
@@ -162,7 +166,7 @@ function MonthEndModal({ pnl }: { pnl: PnL }) {
           <span className={`font-ledger text-sm font-semibold ${pnl.cashAfter < 0 ? "text-coral-400" : "text-cream-50/80"}`}>
             Cash: {gbpFull(pnl.cashAfter)}
           </span>
-          <button onClick={() => act({ t: "ACK" })} className="btn-primary h-11 flex-1 max-w-[200px] text-sm">
+          <button onClick={() => act({ t: "ACK" })} className="btn-primary h-11 max-w-[200px] flex-1 text-sm">
             Continue
           </button>
         </div>
@@ -175,7 +179,7 @@ function MonthEndModal({ pnl }: { pnl: PnL }) {
 
 function EventModal({ pending }: { pending: Extract<PendingAction, { kind: "event" }> }) {
   const act = useGame((s) => s.act);
-  const tint = TILE_TINT[pending.category] ?? "#6FA8FF";
+  const tint = CATEGORY_TINT[pending.category] ?? "#6FA8FF";
   return (
     <Sheet open locked maxW="max-w-md">
       <div className="p-5">
@@ -242,9 +246,10 @@ function EventModal({ pending }: { pending: Extract<PendingAction, { kind: "even
 // --- owner referral ----------------------------------------------------------------
 
 function ReferralModal({ pending }: { pending: Extract<PendingAction, { kind: "referral" }> }) {
+  const game = useGame((s) => s.game)!;
   const act = useGame((s) => s.act);
-  const card = pending.card;
-  const city = cityById(card.cityId);
+  const area = areaById(game, pending.areaId);
+  const city = cityById(area.cityId);
   return (
     <Sheet open locked maxW="max-w-md">
       <div className="p-5">
@@ -253,18 +258,17 @@ function ReferralModal({ pending }: { pending: Extract<PendingAction, { kind: "r
         </div>
         <h3 className="font-display text-lg font-bold">A happy owner sent a friend</h3>
         <p className="mt-1 text-[0.82rem] text-cream-50/75">
-          They want you to manage it. No onboarding cost, starts as STR — convert it later if you like.
+          They want you to manage their unit in {area.name} — no onboarding cost, live immediately.
+          It starts {area.regRisk >= 60 ? "as MTR (the area's regulation is spicy)" : "as STR"}; switch it later if you like.
         </p>
         <div className="panel mt-3 flex items-center gap-3 p-3">
-          <PropertyArt hue={card.hue} emoji={card.emoji} className="h-14 w-14 rounded-xl" />
+          <AreaArt hue={city.hue} emoji={city.emoji} className="h-14 w-14 shrink-0 rounded-xl" />
           <div className="min-w-0">
-            <div className="truncate text-sm font-bold">{card.name}</div>
+            <div className="truncate text-sm font-bold">{area.name}</div>
             <div className="text-[0.72rem] text-cream-50/60">
-              {card.neighbourhood}, {city.name} · {card.bedrooms} bed · {card.type}
+              {city.name} · {"£".repeat(area.level)} area · ADR £{area.baseAdr} · occ {Math.round(area.baseOcc * 100)}%
             </div>
-            <div className="text-[0.72rem] text-cream-50/60">
-              ADR £{card.strAdr} · occ {Math.round(card.strOcc * 100)}% · +2.0 ops load
-            </div>
+            <div className="text-[0.72rem] text-cream-50/60">+1 unit · warm owner (trust 78)</div>
           </div>
         </div>
         <div className="mt-4 flex gap-2">

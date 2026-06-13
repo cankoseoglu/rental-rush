@@ -1,89 +1,290 @@
 // ---------------------------------------------------------------------------
-// Bot decision policies. Maya plays aggressive lease/STR scale; Sam plays
-// steady buy/manage. Both use the same projection maths as the human UI.
+// Bot policies V2: area-control edition.
+// Maya scales fast (lease units, buildings, hotels, fast furnish, debt).
+// Sam compounds (buy/manage, slow furnish, licences first, low debt).
+// Both price moves with the same projection engine the human sees.
 // ---------------------------------------------------------------------------
 
 import type { Action } from "./engine/reducer";
 import { creditLeft } from "./engine/reducer";
 import type {
-  DealType,
+  Asset,
+  FurnishType,
   GameState,
+  OpModel,
   PendingAction,
   PlayerState,
-  Strategy,
+  StaffId,
 } from "./types";
-import type { StaffId } from "./types";
 import { makeRng } from "./rng";
-import { opsCapacity } from "./data/staff";
-import { playerLoad, projectDeal } from "./engine/sim";
+import { hasStaff, opsCapacity, staffCost } from "./data/staff";
+import {
+  areaById,
+  fullPlayerLoad,
+  isUnlicensed,
+  manageCapReached,
+  needsLicence,
+  playerLoad,
+  projectAcquisition,
+  type AcquisitionSpec,
+} from "./engine/sim";
+import { OPS_PER_UNIT } from "./types";
+
+/** Cash floor that scales with the bot's fixed monthly obligations. */
+function runwayBuffer(p: PlayerState, base: number, factor: number): number {
+  const fixed =
+    p.assets.reduce((s, a) => s + a.monthlyFixed, 0) +
+    staffCost(p) +
+    p.loans.reduce((s, l) => s + l.principal * l.ratePm, 0);
+  return base + Math.round(fixed * factor);
+}
 
 interface Personality {
-  buffer: number; // cash they refuse to dip below for acquisitions
-  strBias: number;
-  dealBias: Record<DealType, number>;
-  riskTol: number; // 0..1
-  hireAt: number; // load/cap ratio that triggers capacity hires
+  buffer: number;
+  riskTol: number;
+  hireAt: number;
   loanHappy: boolean;
   dealThreshold: number;
+  nightlyBias: number; // STR/HOTEL appetite
+  buildingBias: number;
+  hotelBias: number;
+  dealBias: { rent: number; buy: number; manage: number; building: number };
+  furnish: FurnishType;
 }
 
 const PERSONALITIES: Record<"aggressive" | "steady", Personality> = {
   aggressive: {
-    buffer: 6_000,
-    strBias: 6_000,
-    dealBias: { buy: 0, lease: 9_000, manage: -1_000 },
+    buffer: 10_000,
     riskTol: 0.8,
     hireAt: 1.02,
     loanHappy: true,
     dealThreshold: 800,
+    nightlyBias: 6_000,
+    buildingBias: 6_000,
+    hotelBias: 8_000,
+    dealBias: { rent: 8_000, buy: 0, manage: -1_000, building: 6_000 },
+    furnish: "fast",
   },
   steady: {
     buffer: 30_000,
-    strBias: 0,
-    dealBias: { buy: 7_000, lease: -2_000, manage: 7_000 },
     riskTol: 0.25,
     hireAt: 0.85,
     loanHappy: false,
     dealThreshold: 2_500,
+    nightlyBias: 0,
+    buildingBias: 0,
+    hotelBias: -6_000,
+    dealBias: { rent: -2_000, buy: 7_000, manage: 7_000, building: -4_000 },
+    furnish: "slow",
   },
 };
 
-const persOf = (p: PlayerState): Personality =>
-  PERSONALITIES[p.personality ?? "steady"];
+const persOf = (p: PlayerState): Personality => PERSONALITIES[p.personality ?? "steady"];
 
-function decideDeal(state: GameState, p: PlayerState, card: PendingAction & { kind: "property" }): Action {
+// --- area decisions ---------------------------------------------------------------
+
+function decideAreaActions(state: GameState, p: PlayerState, areaId: string): Action[] {
   const pers = persOf(p);
   const rng = makeRng(state);
-  let best: { action: Action; util: number } | null = null;
-  const strategies: Strategy[] = ["STR", "MTR", "LTR"];
+  const area = areaById(state, areaId);
+  const out: Action[] = [];
 
-  for (const deal of card.card.allowedDeals) {
-    for (const strategy of strategies) {
-      const proj = projectDeal(card.card, deal, strategy, p, state);
-      if (!proj.affordable) continue;
-      if (p.cash - proj.cashNow < pers.buffer) continue;
+  const kinds: AcquisitionSpec["kind"][] = ["rent", "buy"];
+  if (!manageCapReached(p, area.id)) kinds.push("manage");
+  if (state.buildingTaken[area.id] === null) kinds.push("building");
+  const models: OpModel[] = ["STR", "MTR", "LTR"];
 
-      let util = proj.net * 12;
-      util += pers.dealBias[deal];
-      if (strategy === "STR") util += pers.strBias;
-      if (deal === "buy") util += card.card.price * 0.05; // equity + appreciation kicker
-      if (proj.flags.includes("Would exceed ops capacity"))
-        util -= (1 - pers.riskTol) * 30_000 + 6_000;
-      if (proj.flags.includes("High-regulation city")) util -= (1 - pers.riskTol) * 9_000;
-      if (deal === "lease" && strategy === "STR") util -= (1 - pers.riskTol) * 6_000;
-      if (proj.net <= 0) util -= 25_000;
+  const monthsRemaining = state.maxMonths - state.month;
+  const buffer = runwayBuffer(p, pers.buffer, pers.loanHappy ? 1.5 : 2.5);
+  const load = fullPlayerLoad(p); // plan on everything going live
+  const cap = opsCapacity(p);
+  const slack = pers.riskTol > 0.5 ? 0.5 : 0;
+  const staffed = hasStaff(p, "guestOps") || hasStaff(p, "aiOps");
+  const canStaffUp = staffed || p.cash > 40_000;
+  let best: { spec: AcquisitionSpec; util: number } | null = null;
+  for (const kind of kinds) {
+    const modelPool: OpModel[] =
+      kind === "building" && canStaffUp ? [...models, "HOTEL"] : models;
+    for (const model of modelPool) {
+      // hard ops gate: bots never knowingly wreck their whole portfolio
+      const addedLoad = OPS_PER_UNIT[model] * (kind === "building" ? area.buildingUnits : 1);
+      const capAfterHires = cap + (hasStaff(p, "aiOps") ? 0 : 3) + (hasStaff(p, "guestOps") ? 0 : 3);
+      if (load + addedLoad > capAfterHires + slack) continue;
+
+      const withLicence =
+        needsLicence(area, model, p) && (model === "HOTEL" || pers.riskTol < 0.5 || rng() < 0.4);
+      const spec: AcquisitionSpec = { kind, model, furnish: pers.furnish, withLicence };
+      const proj = projectAcquisition(state, p, area, spec);
+      const totalCashNow = proj.costs.cashNow + (withLicence ? proj.costs.licenceCost : 0);
+      if (p.cash - totalCashNow < buffer) continue;
+      if (model === "HOTEL" && !staffed && !canStaffUp) continue;
+      if (proj.liveNet <= (kind === "buy" ? -300 : 0)) continue; // never knowingly bleed
+      if (load + addedLoad > cap && proj.flags.includes("Over ops capacity") && pers.riskTol < 0.5)
+        continue;
+      // pipelines that can't finish before the year ends are pure burn
+      // (hotel licences run alongside the fit-out, so take the max, not the sum)
+      const pipeMonths =
+        model === "HOTEL" ? Math.max(proj.monthsToLive, 4) : proj.monthsToLive;
+      if (pipeMonths >= monthsRemaining) continue;
+
+      const monthsEarning = Math.max(0, monthsRemaining - pipeMonths);
+      let util =
+        proj.liveNet * 12 + // terminal value: 12×NOI in the final score
+        proj.liveNet * monthsEarning -
+        proj.burnNow * Math.min(pipeMonths, monthsRemaining);
+      util += pers.dealBias[kind];
+      if (kind === "manage") util -= managedUnitsOf(p) * 1_500; // owner pool thins out
+      if (model === "STR" || model === "HOTEL") util += pers.nightlyBias;
+      if (kind === "building") util += pers.buildingBias;
+      if (model === "HOTEL") util += pers.hotelBias;
+      if (kind === "buy") util += area.unitPrice * 0.05;
+      if (proj.flags.includes("Over ops capacity")) util -= (1 - pers.riskTol) * 30_000 + 6_000;
+      if (proj.flags.includes("Licence advised") && !withLicence) util -= (1 - pers.riskTol) * 9_000;
+      // contesting control is fun: small bonus for entering a rival's area
+      const controller = state.control[area.id];
+      if (controller !== null && controller !== p.id) util += pers.riskTol * 3_000;
       util *= 0.88 + rng() * 0.24;
 
-      if (!best || util > best.util) {
-        best = { action: { t: "DEAL", deal, strategy }, util };
+      if (!best || util > best.util) best = { spec, util };
+    }
+  }
+  if (best && best.util > pers.dealThreshold) {
+    // hotels need an ops backbone in place before signing
+    if (
+      best.spec.model === "HOTEL" &&
+      !(hasStaff(p, "guestOps") || hasStaff(p, "aiOps")) &&
+      p.cash > 30_000
+    ) {
+      out.push({ t: "HIRE", staff: "aiOps" });
+    }
+    out.push({ t: "ACQUIRE", spec: best.spec });
+  }
+
+  // licence any exposed nightly asset here (steady cares, aggressive sometimes)
+  const exposed = p.assets.find(
+    (a) =>
+      a.areaId === area.id &&
+      (a.model === "STR" || a.model === "HOTEL") &&
+      a.licence !== "applied" &&
+      a.licence !== "approved" &&
+      isUnlicensed(state, p, a),
+  );
+  if (exposed && (pers.riskTol < 0.5 || rng() < 0.3) && p.cash > pers.buffer + 8_000) {
+    out.push({ t: "APPLY_LICENCE", assetId: exposed.id });
+  }
+
+  out.push({ t: "CLOSE_AREA" });
+  return out;
+}
+
+// --- housekeeping (hiring / finance), run once per own turn -------------------------
+
+export function botHousekeeping(state: GameState, p: PlayerState): Action[] {
+  const pers = persOf(p);
+  const out: Action[] = [];
+  const has = (id: StaffId) => p.staff.includes(id);
+  const load = playerLoad(p);
+  let cap = opsCapacity(p);
+  const live = p.assets.filter((a) => a.status === "live");
+  // rough monthly nightly gross — staff are only worth their salary at scale
+  const nightlyGross = live
+    .filter((a) => a.model === "STR" || a.model === "HOTEL")
+    .reduce((s, a) => {
+      const area = areaById(state, a.areaId);
+      return s + area.baseAdr * 30 * area.baseOcc * a.units * (a.model === "HOTEL" ? 1.3 : 1);
+    }, 0);
+  const totalUnits = live.reduce((s, a) => s + a.units, 0);
+  const managedUnits = p.assets
+    .filter((a) => a.deal === "manage")
+    .reduce((s, a) => s + a.units, 0);
+  const minCash = pers.loanHappy ? 12_000 : 25_000;
+
+  const hire = (id: StaffId) => {
+    if (!has(id) && p.cash >= minCash) {
+      out.push({ t: "HIRE", staff: id });
+      if (id === "guestOps" || id === "aiOps") cap += 3;
+    }
+  };
+
+  // capacity hires only when ops actually binds
+  if (load / cap >= pers.hireAt) hire("aiOps");
+  if (load / cap >= pers.hireAt) hire("guestOps");
+  // value hires only once the portfolio gross can carry the salary
+  if (nightlyGross >= 30_000) hire("cleaners");
+  if (nightlyGross >= 55_000) hire("revenue");
+  if (managedUnits >= 5) hire("ownerSuccess");
+  if (totalUnits >= 12) hire("maintenance");
+  // hotels need an ops backbone before they can even be considered
+  if (
+    pers.loanHappy &&
+    !has("guestOps") &&
+    !has("aiOps") &&
+    p.assets.some((a) => a.kind === "building")
+  )
+    hire("aiOps");
+
+  // shed staff that no longer pays for itself
+  if (has("cleaners") && nightlyGross < 22_000) out.push({ t: "FIRE", staff: "cleaners" });
+  if (has("revenue") && nightlyGross < 40_000) out.push({ t: "FIRE", staff: "revenue" });
+  if (p.cash < 10_000 && p.staff.length) {
+    const order: StaffId[] = ["revenue", "maintenance", "ownerSuccess", "cleaners"];
+    const target = order.find((id) => has(id));
+    if (target) out.push({ t: "FIRE", staff: target });
+  }
+
+  if (pers.loanHappy) {
+    const monthsLeft = state.maxMonths - state.month;
+    if (
+      p.cash < 40_000 &&
+      creditLeft(p) >= 60_000 &&
+      monthsLeft >= 4 &&
+      p.loans.reduce((s, l) => s + l.principal, 0) < 120_000
+    )
+      out.push({ t: "LOAN", kind: "bank", amount: 60_000 });
+    if (p.cash < 15_000 && !p.investorTaken) out.push({ t: "INVESTOR" });
+  } else {
+    if (p.cash > 90_000 && p.loans.length) {
+      const l = p.loans[0];
+      out.push({ t: "REPAY", loanId: l.id, amount: Math.min(l.principal, 40_000) });
+    }
+    if (p.cash < 18_000 && creditLeft(p) >= 40_000)
+      out.push({ t: "LOAN", kind: "bank", amount: 40_000 });
+    // steady Sam buys city compliance where he runs exposed nightly units
+    const exposed = p.assets.find((a) => isUnlicensed(state, p, a));
+    if (exposed && p.cash > 45_000) {
+      const cityId = areaById(state, exposed.areaId).cityId;
+      if (!p.cityCompliance.includes(cityId)) out.push({ t: "UPGRADE_COMPLIANCE", cityId });
+    }
+  }
+  // rejected licences: hotels reapply early then bail; unlicensed STR units
+  // running in high-reg areas convert rather than keep eating fines
+  const monthsRemaining = state.maxMonths - state.month;
+  for (const a of p.assets) {
+    if (a.licence !== "rejected") continue;
+    if (a.model === "HOTEL") {
+      if (monthsRemaining <= 4) out.push({ t: "SWITCH_MODEL", assetId: a.id, model: "MTR" });
+      else if (p.cash > pers.buffer + 10_000) out.push({ t: "APPLY_LICENCE", assetId: a.id });
+    } else if (a.model === "STR" && isUnlicensed(state, p, a)) {
+      if (pers.riskTol < 0.5 || a.licenceAttempts >= 1 || monthsRemaining <= 4) {
+        out.push({ t: "SWITCH_MODEL", assetId: a.id, model: "MTR" });
+      } else if (p.cash > pers.buffer + 8_000) {
+        out.push({ t: "APPLY_LICENCE", assetId: a.id });
       }
     }
   }
-  if (best && best.util > pers.dealThreshold) return best.action;
-  return { t: "PASS_DEAL" };
+  return out;
 }
 
-function decideEventChoice(state: GameState, p: PlayerState, pending: PendingAction & { kind: "event" }): Action {
+const managedUnitsOf = (p: PlayerState): number =>
+  p.assets.filter((a) => a.deal === "manage").reduce((s, a) => s + a.units, 0);
+
+// --- events ------------------------------------------------------------------------
+
+function decideEventChoice(
+  state: GameState,
+  p: PlayerState,
+  pending: Extract<PendingAction, { kind: "event" }>,
+): Action {
   const pers = persOf(p);
   const rng = makeRng(state);
   let bestId = pending.choices[0].id;
@@ -99,114 +300,53 @@ function decideEventChoice(state: GameState, p: PlayerState, pending: PendingAct
   return { t: "EVENT_CHOICE", choiceId: bestId };
 }
 
-function hiringActions(state: GameState, p: PlayerState): Action[] {
-  const pers = persOf(p);
-  const out: Action[] = [];
-  const has = (id: StaffId) => p.staff.includes(id);
-  const load = playerLoad(p);
-  let cap = opsCapacity(p);
-  const strCount = p.holdings.filter((h) => h.strategy === "STR").length;
-  const managed = p.holdings.filter((h) => h.deal === "manage").length;
-  const minCash = pers.loanHappy ? 12_000 : 25_000;
+// --- emergencies ---------------------------------------------------------------------
 
-  const hire = (id: "guestOps" | "cleaners" | "maintenance" | "revenue" | "ownerSuccess" | "aiOps") => {
-    if (!has(id) && p.cash >= minCash) {
-      out.push({ t: "HIRE", staff: id });
-      if (id === "guestOps" || id === "aiOps") cap += 3;
-    }
-  };
-
-  if (load / cap >= pers.hireAt) hire("aiOps");
-  if (load / cap >= pers.hireAt) hire("guestOps");
-  if (strCount >= (pers.loanHappy ? 4 : 3)) hire("cleaners");
-  if (strCount >= 3 && p.cash > 60_000) hire("revenue");
-  if (managed >= (pers.loanHappy ? 3 : 2)) hire("ownerSuccess");
-  if (p.holdings.length >= (pers.loanHappy ? 5 : 4)) hire("maintenance");
-
-  // shed payroll when broke
-  if (p.cash < 10_000 && p.staff.length) {
-    const order: Array<"revenue" | "maintenance" | "ownerSuccess" | "cleaners"> = [
-      "revenue",
-      "maintenance",
-      "ownerSuccess",
-      "cleaners",
-    ];
-    const target = order.find((id) => has(id));
-    if (target) out.push({ t: "FIRE", staff: target });
-  }
-  return out;
-}
-
-function financeActions(state: GameState, p: PlayerState): Action[] {
-  const pers = persOf(p);
-  const out: Action[] = [];
-  if (pers.loanHappy) {
-    if (p.cash < 40_000 && creditLeft(p) >= 60_000)
-      out.push({ t: "LOAN", kind: "bank", amount: 60_000 });
-    if (p.cash < 15_000 && !p.investorTaken) out.push({ t: "INVESTOR" });
-  } else {
-    if (p.cash > 90_000 && p.loans.length) {
-      const l = p.loans[0];
-      out.push({ t: "REPAY", loanId: l.id, amount: Math.min(l.principal, 40_000) });
-    }
-    if (p.cash < 18_000 && creditLeft(p) >= 40_000)
-      out.push({ t: "LOAN", kind: "bank", amount: 40_000 });
-  }
-  return out;
-}
-
-function upgradeActions(state: GameState, p: PlayerState): Action[] {
-  const pers = persOf(p);
-  const out: Action[] = [];
-  if (!pers.loanHappy) {
-    // steady Sam buys compliance where exposed
-    const exposed = p.holdings.find(
-      (h) =>
-        h.strategy === "STR" &&
-        h.def.regRisk >= 60 &&
-        !h.licence &&
-        !p.cityCompliance.includes(h.def.cityId),
-    );
-    if (exposed && p.cash > 40_000)
-      out.push({ t: "UPGRADE_COMPLIANCE", cityId: exposed.def.cityId });
-  }
-  if (p.cash > 45_000) {
-    const target = p.holdings
-      .filter((h) => h.strategy === "STR" && !h.pricingTools)
-      .sort((a, b) => b.lastNet - a.lastNet)[0];
-    if (target) out.push({ t: "UPGRADE_PRICING", holdingId: target.id });
-  }
-  return out;
-}
-
-/** One emergency step at a time; the driver re-evaluates after each dispatch. */
 function emergencyAction(state: GameState, p: PlayerState): Action {
   if (p.cash >= 0) return { t: "EMERGENCY_DONE" };
   const needed = -p.cash;
 
   const borrow = Math.min(needed + 15_000, creditLeft(p));
-  if (borrow >= 5_000) {
-    return { t: "LOAN", kind: "bridge", amount: borrow };
-  }
-  const owned = p.holdings
-    .filter((h) => h.deal === "buy")
+  if (borrow >= 5_000) return { t: "LOAN", kind: "bridge", amount: borrow };
+
+  const owned = p.assets
+    .filter((a) => a.deal === "buy")
     .sort((a, b) => b.value - b.mortgage - (a.value - a.mortgage))[0];
   if (owned && owned.value * 0.85 - owned.mortgage > 5_000)
-    return { t: "SELL", holdingId: owned.id, fire: true };
+    return { t: "SELL_ASSET", assetId: owned.id, fire: true };
+
   if ((p.lastPnl?.ownerPayouts ?? 0) > 0 && p.owedOwners === 0) return { t: "DELAY_PAYOUT" };
   if (p.staff.length) return { t: "FIRE", staff: p.staff[p.staff.length - 1] };
-  const bleeder = p.holdings
-    .filter((h) => h.deal === "lease" && h.strategy === "STR" && h.lastNet < 0)
+
+  const bleeder = p.assets
+    .filter(
+      (a) =>
+        a.deal === "lease" &&
+        (a.model === "STR" || a.model === "HOTEL") &&
+        a.status === "live" &&
+        a.lastNet < 0,
+    )
     .sort((a, b) => a.lastNet - b.lastNet)[0];
-  if (bleeder) return { t: "CONVERT", holdingId: bleeder.id, strategy: "MTR" };
+  if (bleeder) return { t: "SWITCH_MODEL", assetId: bleeder.id, model: "MTR" };
+
+  // last resort: exit the heaviest lease burn (often a building in pipeline)
+  if (p.cash < -20_000) {
+    const burner = p.assets
+      .filter((a) => a.deal === "lease" && a.monthlyFixed > 0)
+      .sort((a, b) => b.monthlyFixed - a.monthlyFixed)[0];
+    if (burner && p.cash - burner.monthlyFixed > BANKRUPT_FLOOR_SAFE)
+      return { t: "SELL_ASSET", assetId: burner.id };
+  }
   if (p.cash >= -50_000) return { t: "EMERGENCY_DONE" };
   return { t: "DECLARE_BANKRUPTCY" };
 }
 
-/**
- * Returns the next action(s) for the current bot given the pending head.
- * Emergencies return exactly one action so the driver can re-evaluate.
- */
+const BANKRUPT_FLOOR_SAFE = -48_000;
+
+// --- driver entry point ----------------------------------------------------------------
+
+let housekeepingDoneFor = "";
+
 export function botActionsFor(state: GameState): Action[] {
   const p = state.players[state.current];
   const h = state.pendingQueue[0];
@@ -217,20 +357,22 @@ export function botActionsFor(state: GameState): Action[] {
       return [{ t: "ACK" }];
     case "event":
       return h.choices.length ? [decideEventChoice(state, p, h)] : [{ t: "ACK" }];
-    case "property":
-      return [decideDeal(state, p, h)];
+    case "area": {
+      const key = `${p.id}:${state.month}:${p.pos}`;
+      const housekeeping = housekeepingDoneFor === key ? [] : botHousekeeping(state, p);
+      housekeepingDoneFor = key;
+      return [...housekeeping, ...decideAreaActions(state, p, h.areaId)];
+    }
     case "referral": {
-      const wouldLoad = playerLoad(p) + 2;
+      const wouldLoad = playerLoad(p) + 1;
       const accept = wouldLoad <= opsCapacity(p) + (persOf(p).riskTol > 0.5 ? 1 : 0);
       return [{ t: "REFERRAL", accept }];
     }
-    case "hiring":
-      return [...hiringActions(state, p), { t: "CLOSE_SHOP" }];
-    case "finance":
-      return [...financeActions(state, p), { t: "CLOSE_SHOP" }];
-    case "upgrade":
-      return [...upgradeActions(state, p), { t: "CLOSE_SHOP" }];
     case "emergency":
       return [emergencyAction(state, p)];
   }
+}
+
+export function botAssetById(p: PlayerState, id: string): Asset | undefined {
+  return p.assets.find((a) => a.id === id);
 }

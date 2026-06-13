@@ -8,10 +8,10 @@ import Leaderboard from "./Leaderboard";
 import { Sheet } from "./ui";
 
 const STEPS = [
-  { emoji: "🎲", title: "Roll & land deals", body: "Circle the board. Property tiles bring live deals with real underwriting." },
-  { emoji: "🤝", title: "Pick your angle", body: "Buy, lease or manage each one — then run it STR, MTR or LTR." },
-  { emoji: "🧾", title: "Survive month end", body: "Every lap the books close: revenue, payouts, payroll, fines. Winter bites." },
-  { emoji: "🏆", title: "Biggest empire wins", body: "Cash + equity + cashflow + owner trust − debt. Ten turns. Go." },
+  { emoji: "🎲", title: "Roll & claim areas", body: "16 neighbourhoods. Stack units, take control, charge rivals stay fees on your turf." },
+  { emoji: "🤝", title: "Pick your angle", body: "Rent, buy, manage — or lease whole buildings. Run each as STR, MTR, LTR or Hotel Mode." },
+  { emoji: "🏗️", title: "Race the pipelines", body: "Furnishing fast or slow, licences that get rejected, buildings burning cash before they open." },
+  { emoji: "🧾", title: "Survive month end", body: "Every month the books close for everyone: revenue, payroll, projects, fines. Winter bites first." },
 ];
 
 export default function StartScreen() {
@@ -47,8 +47,8 @@ export default function StartScreen() {
           · Operator Mode ·
         </div>
         <p className="text-balance mx-auto mt-4 max-w-sm text-[0.92rem] leading-relaxed text-cream-50/75">
-          Buy. Lease. Manage. Choose STR, MTR or LTR for every door, hire before the chaos,
-          survive winter and the council — and out-build two rival operators.
+          Claim neighbourhoods, stack units, lease whole buildings and flip them to Hotel Mode.
+          Hire before the chaos, survive winter and the council — and out-build two rival operators.
         </p>
       </motion.div>
 
