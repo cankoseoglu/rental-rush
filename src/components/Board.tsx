@@ -240,10 +240,9 @@ export default function Board() {
 
   return (
     <div className="no-scrollbar w-full overflow-x-auto">
-      <div
-        className="mx-auto w-full min-w-[340px] px-1"
-        style={{ maxWidth: "min(100%, calc(100svh - 220px))" }}
-      >
+      <div className="mx-auto w-full min-w-[320px] px-1">
+        {/* width is driven by the parent column: full-width on mobile,
+            sized to the screen height on desktop so the board dominates */}
         <div
           className="relative grid aspect-square w-full grid-cols-7 grid-rows-7 gap-[3px] rounded-2xl border-[3px] border-[#131722] p-[5px]"
           style={{
