@@ -14,7 +14,6 @@ const MUTE_KEY = "rr.muted.v1";
 let ctx: AudioContext | null = null;
 let master: GainNode | null = null;
 let muted = false;
-let bg: { gain: GainNode; nodes: AudioScheduledSourceNode[] } | null = null;
 
 type WindowWithWebkit = Window & { webkitAudioContext?: typeof AudioContext };
 
@@ -26,7 +25,11 @@ function ensureCtx(): AudioContext | null {
   ctx = new AC();
   master = ctx.createGain();
   master.gain.value = muted ? 0 : 1;
-  master.connect(ctx.destination);
+  // a gentle limiter so music + dice + hops never clip when they stack
+  const comp = ctx.createDynamicsCompressor();
+  comp.threshold.value = -10;
+  comp.ratio.value = 4;
+  master.connect(comp).connect(ctx.destination);
   return ctx;
 }
 
@@ -144,64 +147,170 @@ export function playHop(i: number): void {
   blip(c, master, now, freq * 1.6, freq, 0.12, 0.14, "sine");
 }
 
-// --- background pad ----------------------------------------------------------
+// --- background melody -------------------------------------------------------
+// A warm lo-fi loop: chords + walking bass + a music-box melody with a soft
+// echo. Two 8-bar phrases (A then B over the same C–Am–F–G changes) make a
+// ~48s loop so the tune doesn't feel repetitive. A lookahead scheduler keeps
+// timing tight despite JS timer jitter.
+
+const BPM = 82;
+const SPB = 60 / BPM; // seconds per beat
+const LOOP_BEATS = 16 * 4; // 16 bars of 4/4
+
+const midi = (n: number) => 440 * Math.pow(2, (n - 69) / 12);
+
+// one chord per bar: C Am F G, twice over the 16-bar loop
+const CHORDS: { pad: number[]; bass: number }[] = [
+  { pad: [60, 64, 67, 71], bass: 36 }, // Cmaj7
+  { pad: [57, 60, 64, 67], bass: 33 }, // Am7
+  { pad: [53, 57, 60, 64], bass: 29 }, // Fmaj7
+  { pad: [55, 59, 62, 65], bass: 31 }, // G7
+];
+const BAR_CHORD = [0, 0, 1, 1, 2, 2, 3, 3, 0, 0, 1, 1, 2, 2, 3, 3];
+
+// melody as [midi | null rest, beats], laid end to end across the 16 bars
+const MELODY: Array<[number | null, number]> = [
+  // phrase A
+  [64, 1], [67, 1], [72, 1], [null, 1],
+  [71, 1.5], [67, 0.5], [64, 1], [null, 1],
+  [69, 1], [72, 1], [71, 1], [null, 1],
+  [67, 1], [64, 1], [69, 2],
+  [69, 1], [72, 1], [77, 1], [null, 1],
+  [76, 1.5], [72, 0.5], [69, 1], [null, 1],
+  [67, 1], [71, 1], [74, 1], [null, 1],
+  [77, 1], [74, 1], [67, 2],
+  // phrase B
+  [67, 0.5], [69, 0.5], [67, 1], [64, 1], [null, 1],
+  [72, 1], [74, 1], [76, 2],
+  [72, 0.5], [71, 0.5], [69, 1], [67, 1], [64, 1],
+  [69, 2], [null, 2],
+  [65, 0.5], [67, 0.5], [69, 1], [72, 1], [69, 1],
+  [67, 1], [65, 1], [64, 2],
+  [62, 1], [67, 1], [71, 1], [74, 1],
+  [72, 2], [null, 2],
+];
+
+interface Music {
+  gain: GainNode;
+  chordBus: AudioNode;
+  melodyBus: AudioNode;
+  delay: DelayNode;
+  timer: ReturnType<typeof setInterval>;
+  nextLoopAt: number;
+}
+let music: Music | null = null;
+
+/** Schedule one envelope-shaped oscillator note. */
+function voice(
+  c: AudioContext,
+  dest: AudioNode,
+  freq: number,
+  t: number,
+  dur: number,
+  vol: number,
+  type: OscillatorType,
+  attack: number,
+  release: number,
+) {
+  const o = c.createOscillator();
+  o.type = type;
+  o.frequency.value = freq;
+  const g = c.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + attack);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur + release);
+  o.connect(g).connect(dest);
+  o.start(t);
+  o.stop(t + dur + release + 0.05);
+}
+
+function scheduleLoop(c: AudioContext, m: Music, start: number) {
+  // chords (soft pad) + walking bass
+  for (let bar = 0; bar < 16; bar++) {
+    const barT = start + bar * 4 * SPB;
+    const ch = CHORDS[BAR_CHORD[bar]];
+    for (const n of ch.pad) {
+      voice(c, m.chordBus, midi(n), barT, 4 * SPB * 0.96, 0.038, "triangle", 0.5, 0.4);
+    }
+    voice(c, m.chordBus, midi(ch.bass), barT, 1.7 * SPB, 0.13, "sine", 0.02, 0.25);
+    voice(c, m.chordBus, midi(ch.bass), barT + 2 * SPB, 1.7 * SPB, 0.11, "sine", 0.02, 0.25);
+  }
+  // melody (music-box: triangle + an octave of sine sparkle), with echo send
+  let beat = 0;
+  for (const [n, d] of MELODY) {
+    if (n !== null) {
+      const t = start + beat * SPB;
+      const dur = d * SPB * 0.9;
+      const f = midi(n);
+      const vol = 0.17 * (0.9 + Math.random() * 0.2); // gentle humanise
+      voice(c, m.melodyBus, f, t, dur, vol, "triangle", 0.012, 0.5);
+      voice(c, m.melodyBus, f * 2, t, dur * 0.6, vol * 0.22, "sine", 0.012, 0.3);
+      voice(c, m.delay, f, t, dur, vol * 0.5, "triangle", 0.012, 0.4);
+    }
+    beat += d;
+  }
+}
 
 export function startBackground(): void {
   const c = ensureCtx();
-  if (!c || !master || bg) return;
+  if (!c || !master || music) return;
   if (c.state === "suspended") void c.resume();
   const now = c.currentTime;
 
-  const sub = c.createGain();
-  sub.gain.setValueAtTime(0.0001, now);
-  sub.gain.linearRampToValueAtTime(0.5, now + 3); // slow fade-in
+  const gain = c.createGain();
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.linearRampToValueAtTime(0.9, now + 2.5); // slow fade-in (master handles mute)
+  gain.connect(master);
 
-  const filter = c.createBiquadFilter();
-  filter.type = "lowpass";
-  filter.frequency.value = 620;
-  filter.Q.value = 0.6;
+  // pad/bass tone-shaping
+  const chordBus = c.createBiquadFilter();
+  chordBus.type = "lowpass";
+  chordBus.frequency.value = 1500;
+  chordBus.Q.value = 0.4;
+  chordBus.connect(gain);
 
-  // slow cutoff "breathing"
-  const lfo = c.createOscillator();
-  const lfoGain = c.createGain();
-  lfo.frequency.value = 0.05;
-  lfoGain.gain.value = 220;
-  lfo.connect(lfoGain).connect(filter.frequency);
-  lfo.start();
+  // melody bus + a tape-ish echo for lo-fi space
+  const melodyBus = c.createGain();
+  melodyBus.gain.value = 1;
+  melodyBus.connect(gain);
+  const delay = c.createDelay(1.0);
+  delay.delayTime.value = SPB * 0.75;
+  const fb = c.createGain();
+  fb.gain.value = 0.26;
+  const wet = c.createGain();
+  wet.gain.value = 0.16;
+  delay.connect(fb).connect(delay);
+  delay.connect(wet).connect(gain);
 
-  filter.connect(sub).connect(master);
+  const m: Music = { gain, chordBus, melodyBus, delay, timer: 0 as never, nextLoopAt: now + 0.25 };
+  music = m;
 
-  // A add9 voicing, low and warm: A2 E3 A3 B3 C#4
-  const chord = [110, 164.81, 220, 246.94, 277.18];
-  const oscs: OscillatorNode[] = [];
-  chord.forEach((f, i) => {
-    const o = c.createOscillator();
-    o.type = "triangle";
-    o.frequency.value = f;
-    o.detune.value = i % 2 === 0 ? 4 : -4; // gentle beating for warmth
-    const g = c.createGain();
-    g.gain.value = 0.1;
-    o.connect(g).connect(filter);
-    o.start(now);
-    oscs.push(o);
-  });
-
-  bg = { gain: sub, nodes: [lfo, ...oscs] };
+  const pump = () => {
+    if (!music) return;
+    // schedule whole loops a little ahead of the playhead
+    while (music.nextLoopAt < c.currentTime + 1.5) {
+      scheduleLoop(c, music, music.nextLoopAt);
+      music.nextLoopAt += LOOP_BEATS * SPB;
+    }
+  };
+  pump();
+  m.timer = setInterval(pump, 250);
 }
 
 export function stopBackground(): void {
   const c = ctx;
-  if (!c || !bg) return;
+  if (!c || !music) return;
+  const m = music;
+  music = null;
+  clearInterval(m.timer);
   const now = c.currentTime;
-  const { gain, nodes } = bg;
-  bg = null;
-  gain.gain.cancelScheduledValues(now);
-  gain.gain.setTargetAtTime(0.0001, now, 0.4);
-  for (const n of nodes) {
+  m.gain.gain.cancelScheduledValues(now);
+  m.gain.gain.setTargetAtTime(0.0001, now, 0.35); // fade out; queued notes die silent
+  setTimeout(() => {
     try {
-      n.stop(now + 1.6);
+      m.gain.disconnect();
     } catch {
-      /* already stopped */
+      /* already gone */
     }
-  }
+  }, 2000);
 }
