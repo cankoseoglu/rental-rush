@@ -80,7 +80,7 @@ export default function StartScreen() {
         <div className="relative mx-auto max-w-xl">
           <motion.div initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }} className="text-center">
             <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-line bg-ink-800/70 px-3 py-1 text-[0.64rem] font-bold uppercase tracking-[0.18em] text-cream-50/60">
-              A 10-minute property operator game
+              A property operator board game
             </div>
             <h1 className="font-display text-[3.2rem] font-extrabold leading-[0.95] tracking-tight sm:text-6xl">
               RENTAL
@@ -189,7 +189,7 @@ export default function StartScreen() {
                 side of running rentals.
               </p>
               <p>
-                Rental Rush is all of that, squeezed into ten minutes. Every mechanic comes from something I
+                Rental Rush is all of that, distilled into a board game. Every mechanic comes from something I
                 have actually felt: the void period in low season, the owner who wants paying on time, the
                 licence that drags on for months, the building lease that bleeds you before it earns a penny.
                 It is a small love letter to the operators who keep the lights on, and an experiment in how

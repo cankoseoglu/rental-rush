@@ -23,10 +23,10 @@ const splineMono = Spline_Sans_Mono({
 export const metadata: Metadata = {
   title: "Rental Rush: Operator Mode",
   description:
-    "Build the strongest rental business in 10 minutes. Buy, lease or manage properties, pick STR/MTR/LTR strategies, survive winter, regulation and your own ambition — against two ruthless AI rivals.",
+    "Claim neighbourhoods, lease buildings and run them as STR, MTR, LTR or Hotel Mode. Survive a tightening market, squeeze two AI rivals with stay fees and auctions, and be the last solvent operator standing.",
   openGraph: {
     title: "Rental Rush: Operator Mode",
-    description: "I built a rental empire in 10 minutes. Can you beat my score?",
+    description: "Outlast two AI rivals and be the last solvent operator standing. Can you?",
     type: "website",
   },
 };
