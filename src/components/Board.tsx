@@ -168,7 +168,7 @@ function SpecialTile({ tile, state }: { tile: Tile; state: GameState }) {
 }
 
 /**
- * Monopoly-style playing pieces: one chunky token per player, standing on the
+ * Classic board-game playing pieces: one chunky token per player, standing on the
  * board in an overlay layer, gliding tile to tile as displayPos animates.
  * Tokens cluster with per-player offsets so all three fit on one tile.
  */

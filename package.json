@@ -33,5 +33,20 @@
     "tailwindcss": "^4",
     "tsx": "^4.22.4",
     "typescript": "^5"
-  }
+  },
+  "description": "A web board game about running a rental business \u2014 last solvent operator wins. Original, open source.",
+  "license": "MIT",
+  "author": "Can K\u00f6seoglu",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cankoseoglu/rental-rush.git"
+  },
+  "keywords": [
+    "game",
+    "board-game",
+    "nextjs",
+    "typescript",
+    "rental",
+    "simulation"
+  ]
 }
