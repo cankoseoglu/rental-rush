@@ -5,11 +5,12 @@
 // tokens. Everything deeper lives in the area panel.
 
 import { useGame } from "@/lib/store";
-import { tileGridPos, MODEL_COLORS } from "@/lib/game/data/areas";
+import { tileGridPos } from "@/lib/game/data/areas";
 import { cityById, seasonLabel } from "@/lib/game/data/cities";
-import { MONTH_NAMES, type Asset, type GameState, type Tile } from "@/lib/game/types";
+import { MONTH_NAMES, type GameState, type Tile } from "@/lib/game/types";
 import { areaById } from "@/lib/game/engine/sim";
 import Dice from "./Dice";
+import { BuildingIcon } from "./ui";
 import clsx from "clsx";
 
 const levelLabel = (l: number) => "£".repeat(l);
@@ -30,24 +31,23 @@ function pipelineBadges(state: GameState, areaId: string) {
   return badges.slice(0, 2);
 }
 
-function ownerPills(state: GameState, areaId: string) {
+// Live presence per player: how many live units, and whether any is a "big"
+// structure (a leased building or a hotel) → drives the house vs hotel icon.
+function livePresence(state: GameState, areaId: string) {
   return state.players
-    .map((p) => ({
-      p,
-      units: p.assets.reduce((s, a) => (a.areaId === areaId ? s + a.units : s), 0),
-    }))
+    .map((p) => {
+      const live = p.assets.filter((a) => a.areaId === areaId && a.status === "live");
+      return {
+        p,
+        units: live.reduce((s, a) => s + a.units, 0),
+        big: live.some((a) => a.model === "HOTEL" || a.kind === "building"),
+      };
+    })
     .filter((x) => x.units > 0 && !x.p.bankrupt);
 }
 
-function modelChips(state: GameState, areaId: string) {
-  const counts = new Map<string, number>();
-  for (const p of state.players) {
-    for (const a of p.assets) {
-      if (a.areaId !== areaId || a.status !== "live") continue;
-      counts.set(a.model, (counts.get(a.model) ?? 0) + a.units);
-    }
-  }
-  return [...counts.entries()];
+function hasAnyAssets(state: GameState, areaId: string): boolean {
+  return state.players.some((p) => !p.bankrupt && p.assets.some((a) => a.areaId === areaId));
 }
 
 function AreaTile({ tile, state }: { tile: Tile; state: GameState }) {
@@ -57,8 +57,8 @@ function AreaTile({ tile, state }: { tile: Tile; state: GameState }) {
   const city = cityById(area.cityId);
   const controllerId = state.control[area.id];
   const controller = controllerId !== null && controllerId !== undefined ? state.players[controllerId] : null;
-  const pills = ownerPills(state, area.id);
-  const chips = modelChips(state, area.id);
+  const present = livePresence(state, area.id);
+  const anyAssets = hasAnyAssets(state, area.id);
   const pipes = pipelineBadges(state, area.id);
   const isLanding = ui.displayPos[state.current] === tile.idx && ui.busy;
   const selected = ui.selectedAreaId === area.id;
@@ -89,40 +89,32 @@ function AreaTile({ tile, state }: { tile: Tile; state: GameState }) {
         <div className="font-ledger text-[0.42rem] font-bold text-creamink/55 sm:text-[0.5rem]">
           {levelLabel(area.level)}
         </div>
-        {pills.length > 0 ? (
-          <div className="flex flex-wrap items-center justify-center gap-[2px]">
-            {pills.map(({ p, units }) => (
+        {present.length > 0 ? (
+          <div className="mt-[1px] flex max-w-full flex-wrap items-end justify-center gap-x-[3px]">
+            {present.map(({ p, units, big }) => (
               <span
                 key={p.id}
-                title={`${p.name}: ${units} unit${units > 1 ? "s" : ""}`}
-                className="rounded-full border border-[#131722] px-[3px] text-[0.42rem] font-extrabold leading-[1.3] text-[#131722] sm:text-[0.5rem]"
-                style={{ background: p.color }}
+                className="relative flex items-end leading-none"
+                title={`${p.name}: ${units} live ${big ? "building unit" : "unit"}${units > 1 ? "s" : ""}`}
               >
-                {p.name[0]}
-                {units}
+                <BuildingIcon
+                  kind={big ? "hotel" : "house"}
+                  color={p.color}
+                  className="h-[16px] w-[16px] drop-shadow-[0_1px_1px_rgba(0,0,0,0.35)] sm:h-[20px] sm:w-[20px]"
+                />
+                {units > 1 && (
+                  <span className="font-ledger ml-[0.5px] text-[0.46rem] font-extrabold text-creamink/85 sm:text-[0.56rem]">
+                    {units}
+                  </span>
+                )}
               </span>
             ))}
           </div>
-        ) : (
+        ) : !anyAssets ? (
           <span className="rounded-full border border-creamink/25 px-[4px] text-[0.4rem] font-bold uppercase text-creamink/40 sm:text-[0.46rem]">
             open
           </span>
-        )}
-        {chips.length > 0 && (
-          <div className="flex flex-wrap items-center justify-center gap-[2px]">
-            {chips.slice(0, 3).map(([model, units]) => (
-              <span
-                key={model}
-                title={`${units} ${model} unit${units > 1 ? "s" : ""} live`}
-                className="rounded-[3px] px-[3px] text-[0.4rem] font-extrabold leading-[1.35] text-white sm:text-[0.46rem]"
-                style={{ background: MODEL_COLORS[model] }}
-              >
-                {model === "HOTEL" ? "H" : model[0]}
-                {units}
-              </span>
-            ))}
-          </div>
-        )}
+        ) : null}
       </div>
       {/* pipeline footer */}
       <div className="flex h-[12px] w-full shrink-0 items-end justify-start gap-[2px] px-[2px] pb-[2px]">

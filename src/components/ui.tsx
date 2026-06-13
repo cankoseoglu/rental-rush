@@ -7,6 +7,65 @@ import type { ReactNode } from "react";
 import clsx from "clsx";
 import type { OpModel } from "@/lib/game/types";
 
+// --- 3D building icons -------------------------------------------------------
+// Original (non-trademarked) little 3D buildings, tinted to the owner's colour:
+// a pitched-roof house for units, a taller window-grid tower for hotels/blocks.
+
+/** Lighten (pct>0) or darken (pct<0) a #rrggbb colour. */
+function shade(hex: string, pct: number): string {
+  const h = hex.replace("#", "");
+  const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
+  const num = parseInt(full, 16);
+  const r = (num >> 16) & 255;
+  const g = (num >> 8) & 255;
+  const b = num & 255;
+  const adj = (c: number) =>
+    Math.max(0, Math.min(255, Math.round(pct < 0 ? c * (1 + pct) : c + (255 - c) * pct)));
+  return `#${[adj(r), adj(g), adj(b)].map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+}
+
+export function BuildingIcon({
+  kind,
+  color,
+  className,
+}: {
+  kind: "house" | "hotel";
+  color: string;
+  className?: string;
+}) {
+  const light = shade(color, 0.32);
+  const dark = shade(color, -0.3);
+  const darker = shade(color, -0.5);
+  const win = shade(color, 0.6);
+  if (kind === "hotel") {
+    return (
+      <svg viewBox="0 0 28 28" className={className} aria-hidden="true">
+        <ellipse cx="13.5" cy="25.2" rx="10" ry="1.7" fill="#000" opacity="0.18" />
+        <polygon points="16,7 21,4 21,21 16,24" fill={dark} />
+        <polygon points="6,7 11,4 21,4 16,7" fill={light} />
+        <rect x="6" y="7" width="10" height="17" rx="0.6" fill={color} />
+        {[9.6, 13.1, 16.6].map((y) => (
+          <g key={y}>
+            <rect x="8" y={y} width="2.2" height="2.6" rx="0.3" fill={win} />
+            <rect x="11.6" y={y} width="2.2" height="2.6" rx="0.3" fill={win} />
+          </g>
+        ))}
+        <rect x="9.4" y="20.2" width="3.2" height="3.8" rx="0.3" fill={darker} />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 28 28" className={className} aria-hidden="true">
+      <ellipse cx="13.5" cy="25.2" rx="9.5" ry="1.6" fill="#000" opacity="0.18" />
+      <polygon points="17,13 22,9.5 22,19.5 17,23" fill={dark} />
+      <polygon points="11,6.5 16,3.5 22,9.5 17,13" fill={darker} />
+      <rect x="5" y="13" width="12" height="10" rx="0.6" fill={color} />
+      <polygon points="5,13 11,6.5 17,13" fill={light} />
+      <rect x="9" y="17.4" width="3.4" height="5.6" rx="0.4" fill={darker} />
+    </svg>
+  );
+}
+
 export function Sheet({
   open,
   onClose,

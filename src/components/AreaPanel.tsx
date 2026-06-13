@@ -26,7 +26,7 @@ import {
 import { cityById } from "@/lib/game/data/cities";
 import { hasStaff, opsCapacity } from "@/lib/game/data/staff";
 import { gbp, gbpFull } from "@/lib/game/format";
-import { MODEL_META, ModelTag, StatusTag } from "./ui";
+import { BuildingIcon, MODEL_META, ModelTag, StatusTag } from "./ui";
 import clsx from "clsx";
 
 type MoveKind = AcquisitionSpec["kind"];
@@ -413,7 +413,11 @@ function AssetsHere({ areaId, backOffice }: { areaId: string; backOffice: boolea
         assets.map((a) => (
           <div key={a.id} className="flex items-center justify-between rounded-lg bg-ink-800/40 px-2.5 py-1.5">
             <span className="flex items-center gap-1.5 text-[0.68rem] font-semibold" style={{ color: p.color }}>
-              <span className="h-1.5 w-1.5 rounded-full" style={{ background: p.color }} />
+              <BuildingIcon
+                kind={a.model === "HOTEL" || a.kind === "building" ? "hotel" : "house"}
+                color={p.color}
+                className="h-5 w-5 shrink-0"
+              />
               {p.name} · {a.kind === "building" ? `${a.units}-unit block` : "unit"}
             </span>
             <span className="flex items-center gap-1.5">
@@ -438,8 +442,13 @@ function MyAssetRow({ asset: a, backOffice }: { asset: Asset; backOffice: boolea
 
   return (
     <div className="rounded-xl border border-lime-400/25 bg-ink-800/60 px-2.5 py-2">
-      <button onClick={() => setExpanded(!expanded)} className="flex w-full items-center justify-between gap-2 text-left">
-        <span className="min-w-0">
+      <button onClick={() => setExpanded(!expanded)} className="flex w-full items-center gap-2 text-left">
+        <BuildingIcon
+          kind={a.model === "HOTEL" || a.kind === "building" ? "hotel" : "house"}
+          color={me.color}
+          className="h-6 w-6 shrink-0 drop-shadow-[0_1px_1px_rgba(0,0,0,0.4)]"
+        />
+        <span className="min-w-0 flex-1">
           <span className="block truncate text-[0.74rem] font-bold">
             {a.kind === "building" ? `${a.units}-unit block` : "Your unit"}
             <span className="ml-1.5 text-[0.6rem] font-semibold text-cream-50/45">{a.deal}</span>
