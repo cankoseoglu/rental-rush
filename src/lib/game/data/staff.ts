@@ -7,7 +7,7 @@ export const STAFF: StaffDef[] = [
     emoji: "🎧",
     salary: 5000,
     blurb: "Answers the 2am 'how does the oven work' messages so you don't have to.",
-    effect: "+3 ops capacity",
+    effect: "+8 ops capacity",
   },
   {
     id: "cleaners",
@@ -47,7 +47,7 @@ export const STAFF: StaffDef[] = [
     emoji: "🤖",
     salary: 3000,
     blurb: "Drafts replies, triages issues, never sleeps, never unionises.",
-    effect: "+3 ops capacity, −60% missed-message incidents",
+    effect: "+8 ops capacity, −60% missed-message incidents",
   },
 ];
 
@@ -59,4 +59,4 @@ export const staffCost = (p: PlayerState): number =>
   p.staff.reduce((sum, id) => sum + staffById(id).salary, 0);
 
 export const opsCapacity = (p: PlayerState): number =>
-  5 + (hasStaff(p, "guestOps") ? 3 : 0) + (hasStaff(p, "aiOps") ? 3 : 0);
+  8 + (hasStaff(p, "guestOps") ? 8 : 0) + (hasStaff(p, "aiOps") ? 8 : 0);

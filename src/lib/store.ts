@@ -7,7 +7,7 @@
 
 import { create } from "zustand";
 import type { GameMode, GameState } from "./game/types";
-import { createGame, dispatch, type Action } from "./game/engine/reducer";
+import { createGame, dispatch, fastForwardToEnd, type Action } from "./game/engine/reducer";
 import { botActionsFor } from "./game/bots";
 import { loadGame, saveGame, clearSave } from "./game/save";
 import { todayKey } from "./game/leaderboard";
@@ -149,6 +149,10 @@ export const useGame = create<Store>()((set, get) => {
         return { t: "REFERRAL", accept: false };
       case "emergency":
         return { t: "DECLARE_BANKRUPTCY" };
+      case "auction":
+        return { t: "AUCTION_PASS" };
+      case "lotConfig":
+        return { t: "LOT_CONFIG", model: "MTR", furnish: "fast", withLicence: false };
       default:
         return { t: "ACK" };
     }
@@ -207,6 +211,16 @@ export const useGame = create<Store>()((set, get) => {
       const g = get_().game;
       if (!g) return;
       if (g.over) {
+        showOver();
+        return;
+      }
+      // eliminated humans don't act — the surviving bots duel it out instantly
+      if (g.players[0].bankrupt) {
+        set((s) => ({ ui: { ...s.ui, banner: "You're out. The vultures finish the carcass…" } }));
+        await sleep(900);
+        fastForwardToEnd(g, botActionsFor);
+        pushToasts();
+        refresh();
         showOver();
         return;
       }

@@ -103,13 +103,17 @@ try {
 
     await clickButton(page, "Carry on");
 
-    // bots play, month end comes back to you — ack any P&L modals
-    for (let i = 0; i < 120; i++) {
+    // bots play, month end comes back to you — ack P&L modals, pass auctions
+    for (let i = 0; i < 160; i++) {
       const st = await state(page);
       if (st.game.over) break;
       const head = st.game.pendingQueue[0];
       if (head?.kind === "monthEnd" && st.game.current === 0 && st.ui.pendingVisible) {
         await clickButton(page, "Continue");
+      } else if (head?.kind === "auction" && head.order[head.actorIdx] === 0) {
+        await clickButton(page, "Pass");
+      } else if (head?.kind === "lotConfig" && head.playerId === 0) {
+        await clickButton(page, "Set it up");
       } else if (
         st.game.current === 0 &&
         st.game.phase === "awaitRoll" &&

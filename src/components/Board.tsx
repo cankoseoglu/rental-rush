@@ -283,8 +283,13 @@ export default function Board() {
               )}
             </div>
             <div className="rounded-full border-2 border-[#131722]/30 px-2 py-0.5 text-[0.58rem] font-bold uppercase tracking-wider text-[#131722]/60">
-              Month {Math.min(game.month + 1, game.maxMonths)} of {game.maxMonths}
+              Month {game.month + 1} · last operator standing wins
             </div>
+            {game.market.lastCard && (
+              <div className="max-w-[230px] text-[0.56rem] font-bold leading-tight text-[#131722]/55">
+                {game.market.lastCard.emoji} {game.market.lastCard.title}
+              </div>
+            )}
           </div>
 
           <TokenLayer state={game} />

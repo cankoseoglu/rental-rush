@@ -34,7 +34,8 @@ export function seasonFactor(cityId: string, monthIdx: number): number {
   const m = monthIdx % SEASON.length;
   let s = SEASON[m];
   if (cityId === "edi" && m === 2) s = 1.4; // Hogmanay December
-  if (cityId === "bri" && m >= 8) s += 0.1; // seaside early summer
+  if (cityId === "edi" && m === 10) s = 1.55; // festival August
+  if (cityId === "bri" && m >= 8 && m <= 11) s += 0.1; // seaside summer
   if (cityId === "bath") s = Math.max(s, 0.95); // tourist-steady
   if (cityId === "lon") s = Math.max(s, 0.9); // never truly dies
   return s;

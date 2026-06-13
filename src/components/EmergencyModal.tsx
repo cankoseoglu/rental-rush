@@ -5,11 +5,11 @@
 
 import { useState } from "react";
 import { useGame } from "@/lib/store";
-import { creditLeft } from "@/lib/game/engine/reducer";
+import { bankruptFloor, creditLeft } from "@/lib/game/engine/reducer";
 import { areaById } from "@/lib/game/engine/sim";
 import { gbp, gbpFull } from "@/lib/game/format";
 import { staffById } from "@/lib/game/data/staff";
-import { BANKRUPT_FLOOR, SELL_FIRE } from "@/lib/game/types";
+import { SELL_FIRE } from "@/lib/game/types";
 import { Sheet } from "./ui";
 import clsx from "clsx";
 
@@ -19,8 +19,9 @@ export default function EmergencyModal() {
   const p = game.players[game.current];
   const [armDeclare, setArmDeclare] = useState(false);
 
+  const floor = bankruptFloor(game);
   const needed = Math.max(0, -p.cash);
-  const bridge = Math.min(needed + 15_000, creditLeft(p));
+  const bridge = Math.min(needed + 15_000, creditLeft(game, p));
   const canBridge = bridge >= 5_000;
   const canDelay = (p.lastPnl?.ownerPayouts ?? 0) > 0 && p.owedOwners === 0;
   const nightly = p.assets.filter(
@@ -35,10 +36,10 @@ export default function EmergencyModal() {
             🚨
           </span>
           <div>
-            <h3 className="font-display text-xl font-bold text-coral-400">Cash crisis</h3>
+            <h3 className="font-display text-xl font-bold text-coral-400">Insolvency check</h3>
             <p className="text-[0.74rem] text-cream-50/65">
               You're at <span className="font-ledger font-bold text-coral-400">{gbpFull(p.cash)}</span>. Below{" "}
-              {gbpFull(BANKRUPT_FLOOR)} you're done. Claw your way back.
+              {gbpFull(floor)} you're bankrupt — eliminated, assets auctioned. Claw your way back.
             </p>
           </div>
         </div>
@@ -47,7 +48,9 @@ export default function EmergencyModal() {
           {canBridge && (
             <button onClick={() => act({ t: "LOAN", kind: "bridge", amount: bridge })} className="panel w-full px-4 py-3 text-left">
               <div className="text-sm font-bold">🌉 Bridge loan +{gbp(bridge)}</div>
-              <div className="text-[0.7rem] text-cream-50/55">2.5%/month interest. Expensive, fast, no questions.</div>
+              <div className="text-[0.7rem] text-cream-50/55">
+                {(game.market.bridgeRatePm * 100).toFixed(1)}%/month interest. Expensive, fast, no questions.
+              </div>
             </button>
           )}
 
@@ -87,6 +90,21 @@ export default function EmergencyModal() {
                       <span className={clsx("font-ledger shrink-0 text-[0.74rem] font-bold", proceeds > 0 ? "text-lime-300" : "text-cream-50/55")}>
                         {a.deal === "manage" ? "hand back" : `${proceeds >= 0 ? "+" : ""}${gbp(proceeds)}`}
                       </span>
+                    </button>
+                  );
+                })}
+                <p className="pt-1 text-[0.62rem] text-cream-50/45">
+                  …or gamble for a better price: send one to a rival auction instead.
+                </p>
+                {p.assets.slice(0, 3).map((a) => {
+                  const area = areaById(game, a.areaId);
+                  return (
+                    <button
+                      key={`auc-${a.id}`}
+                      onClick={() => act({ t: "AUCTION_MY_ASSET", assetId: a.id })}
+                      className="chip text-violet-400"
+                    >
+                      🔨 Auction the {area.name} {a.kind === "building" ? "block" : "unit"}
                     </button>
                   );
                 })}
@@ -142,13 +160,13 @@ export default function EmergencyModal() {
             <button onClick={() => act({ t: "EMERGENCY_DONE" })} className="btn-primary h-12 w-full text-sm">
               Back to business — {gbpFull(p.cash)}
             </button>
-          ) : p.cash >= BANKRUPT_FLOOR ? (
+          ) : p.cash >= floor ? (
             <button onClick={() => act({ t: "EMERGENCY_DONE" })} className="btn-dark h-12 w-full text-sm">
               Limp on in the red ({gbpFull(p.cash)}) · rep −5
             </button>
           ) : (
             <div className="rounded-2xl bg-coral-500/15 p-3 text-center text-[0.76rem] font-semibold text-coral-400">
-              You're beyond {gbpFull(BANKRUPT_FLOOR)}. Raise cash above the floor — or fold.
+              You're beyond {gbpFull(floor)}. Raise cash above the floor — or fold.
             </div>
           )}
           <button

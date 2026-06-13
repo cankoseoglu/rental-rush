@@ -1,6 +1,7 @@
 // ---------------------------------------------------------------------------
-// Leaderboards. V1 stores runs in localStorage behind a tiny store interface
-// so a Supabase implementation can drop in later (see ScoreStore).
+// Leaderboards V3. Winning means surviving — boards rank wins and survival
+// first; money is just the tiebreak. Storage stays behind ScoreStore so a
+// Supabase implementation can drop in later.
 // ---------------------------------------------------------------------------
 
 import type { ArchetypeId, FinalResult, GameState, PlayerState } from "./types";
@@ -11,15 +12,18 @@ export interface SavedRun {
   dateISO: string;
   mode: "quick" | "daily";
   dailyKey: string | null;
-  score: number;
+  won: boolean;
+  monthsSurvived: number;
+  estate: number; // cash + owned equity (post-game stat, not a win condition)
   archetype: ArchetypeId;
   strategyLabel: string;
   noi: number;
   trust: number;
   rep: number;
   emergencies: number;
+  bankruptciesCaused: number;
   bankruptTurn: number | null;
-  strShare: number; // 0-1
+  strShare: number;
   isMock?: boolean;
 }
 
@@ -28,7 +32,7 @@ export interface ScoreStore {
   add(run: SavedRun): void;
 }
 
-const KEY = "rr.runs.v1";
+const KEY = "rr.runs.v3";
 
 class LocalScoreStore implements ScoreStore {
   list(): SavedRun[] {
@@ -46,7 +50,6 @@ class LocalScoreStore implements ScoreStore {
   }
 }
 
-// Swap for a SupabaseScoreStore later without touching the UI.
 export const scoreStore: ScoreStore = new LocalScoreStore();
 
 export function todayKey(): string {
@@ -72,13 +75,16 @@ export function buildRun(
     dateISO: new Date().toISOString(),
     mode: state.mode,
     dailyKey: state.dailyKey,
-    score: result.score.total,
+    won: result.won,
+    monthsSurvived: result.survivalMonth,
+    estate: result.estate,
     archetype: result.archetype,
     strategyLabel: result.strategyLabel,
-    noi: result.score.noi,
+    noi: result.noi,
     trust: p.trust,
     rep: p.rep,
     emergencies: s.emergencies,
+    bankruptciesCaused: result.bankruptciesCaused,
     bankruptTurn: p.bankruptTurn,
     strShare: totalRev > 0 ? s.strRevenue / totalRev : 0,
   };
@@ -88,7 +94,9 @@ export function buildRun(
 
 const mock = (
   nickname: string,
-  score: number,
+  won: boolean,
+  months: number,
+  estate: number,
   archetype: ArchetypeId,
   extra: Partial<SavedRun> = {},
 ): SavedRun => ({
@@ -97,35 +105,38 @@ const mock = (
   dateISO: "2026-06-01T12:00:00Z",
   mode: "quick",
   dailyKey: null,
-  score,
+  won,
+  monthsSurvived: months,
+  estate,
   archetype,
   strategyLabel: "Balanced operator",
-  noi: Math.round(score / 80),
+  noi: Math.round(estate / 60),
   trust: 70,
   rep: 70,
-  emergencies: 0,
-  bankruptTurn: null,
+  emergencies: won ? 0 : 1,
+  bankruptciesCaused: won ? 1 : 0,
+  bankruptTurn: won ? null : months,
   strShare: 0.5,
   isMock: true,
   ...extra,
 });
 
 export const MOCK_RUNS: SavedRun[] = [
-  mock("TurnoverTina", 684_000, "strKing", { strShare: 0.86, noi: 14_400 }),
-  mock("LeaseLordLou", 598_500, "cashflowBeast", { noi: 16_100, emergencies: 1 }),
-  mock("Adriana ADR", 521_300, "strKing", { strShare: 0.78, noi: 11_900 }),
-  mock("The Leith Lion", 484_700, "opsMachine", { noi: 10_200 }),
-  mock("FiveStarFifi", 452_900, "ownerWhisperer", { trust: 93, noi: 8_800 }),
-  mock("PortfolioPat", 411_000, "boringBillionaire", { noi: 6_900 }),
-  mock("OccupancyOllie", 376_400, "cashflowBeast", { noi: 9_700, strShare: 0.61 }),
-  mock("PennyPincherPru", 341_200, "safeOperator", { strShare: 0.12, noi: 5_200, trust: 81 }),
-  mock("VoidPeriodVic", 308_800, "safeOperator", { strShare: 0.2, noi: 4_600 }),
-  mock("RegRiskRaj", 263_500, "regulationVictim", { strShare: 0.74, emergencies: 1 }),
-  mock("MidTermMo", 229_000, "safeOperator", { strShare: 0.18, noi: 3_900, trust: 84 }),
-  mock("ChurnedCharlie", 174_500, "badReviewMagnet", { trust: 38, rep: 39 }),
-  mock("BridgeLoanBarry", -38_000, "overleveraged", { emergencies: 3, bankruptTurn: 9 }),
-  mock("HotTubHubris", -150_000, "chaosSurvivor", { emergencies: 2, bankruptTurn: 6 }),
-  mock("GaryGuarantee", -150_000, "overleveraged", { emergencies: 4, bankruptTurn: 4 }),
+  mock("TurnoverTina", true, 14, 442_000, "ruthless", { bankruptciesCaused: 2, strShare: 0.82 }),
+  mock("LeaseLordLou", true, 19, 381_500, "cashflowBeast", { noi: 14_100 }),
+  mock("Adriana ADR", true, 12, 356_000, "strKing", { strShare: 0.78 }),
+  mock("The Leith Lion", true, 23, 318_300, "opsMachine"),
+  mock("FiveStarFifi", true, 17, 287_750, "ownerWhisperer", { trust: 93 }),
+  mock("PortfolioPat", true, 26, 261_900, "boringBillionaire", { strShare: 0.2 }),
+  mock("OccupancyOllie", true, 21, 238_400, "cashflowBeast", { noi: 9_700 }),
+  mock("PennyPincherPru", true, 28, 212_000, "safeOperator", { strShare: 0.12, trust: 81 }),
+  mock("VoidPeriodVic", false, 22, 140_800, "safeOperator", { strShare: 0.2 }),
+  mock("RegRiskRaj", false, 16, 83_200, "regulationVictim", { strShare: 0.74 }),
+  mock("MidTermMo", false, 13, 38_000, "chaosSurvivor", { emergencies: 2 }),
+  mock("ChurnedCharlie", false, 11, 6_500, "badReviewMagnet", { trust: 38, rep: 39 }),
+  mock("BridgeLoanBarry", false, 9, 0, "overleveraged", { emergencies: 3 }),
+  mock("HotTubHubris", false, 6, 0, "chaosSurvivor", { emergencies: 2 }),
+  mock("GaryGuarantee", false, 4, 0, "overleveraged", { emergencies: 4 }),
 ];
 
 // --- boards -------------------------------------------------------------------
@@ -145,7 +156,7 @@ export interface BoardDef {
   emoji: string;
   metricLabel: string;
   eligible: (r: SavedRun) => boolean;
-  sortKey: (r: SavedRun) => number; // higher = better
+  sortKey: (r: SavedRun) => number;
   metric: (r: SavedRun) => string;
 }
 
@@ -157,48 +168,54 @@ const gbpShort = (n: number) => {
   return `${sign}£${abs}`;
 };
 
+const survival = (r: SavedRun) =>
+  (r.won ? 1_000_000 : 0) + r.monthsSurvived * 1_000 + Math.min(999, Math.max(0, r.estate / 1000));
+
+const winsMetric = (r: SavedRun) =>
+  r.won ? `WON · m${r.monthsSurvived} · ${gbpShort(r.estate)}` : `out m${r.monthsSurvived}`;
+
 export const BOARDS: BoardDef[] = [
   {
     id: "overall",
     name: "Overall",
     emoji: "🏆",
-    metricLabel: "Empire score",
+    metricLabel: "Wins, then survival",
     eligible: () => true,
-    sortKey: (r) => r.score,
-    metric: (r) => gbpShort(r.score),
+    sortKey: survival,
+    metric: winsMetric,
   },
   {
     id: "daily",
     name: "Daily Challenge",
     emoji: "📅",
-    metricLabel: "Empire score",
+    metricLabel: "Wins, then survival",
     eligible: (r) => r.mode === "daily" && r.dailyKey === todayKey(),
-    sortKey: (r) => r.score,
-    metric: (r) => gbpShort(r.score),
+    sortKey: survival,
+    metric: winsMetric,
   },
   {
     id: "strKing",
     name: "STR King",
     emoji: "👑",
-    metricLabel: "Score (60%+ STR)",
+    metricLabel: "Wins with 60%+ STR",
     eligible: (r) => r.strShare >= 0.6,
-    sortKey: (r) => r.score,
-    metric: (r) => gbpShort(r.score),
+    sortKey: survival,
+    metric: winsMetric,
   },
   {
     id: "safest",
     name: "Safest Operator",
     emoji: "🛡️",
-    metricLabel: "Score, zero emergencies",
-    eligible: (r) => r.emergencies === 0 && r.bankruptTurn === null,
-    sortKey: (r) => r.score,
-    metric: (r) => gbpShort(r.score),
+    metricLabel: "Wins with zero crises",
+    eligible: (r) => r.emergencies === 0 && r.won,
+    sortKey: survival,
+    metric: (r) => `m${r.monthsSurvived} · 0 crises`,
   },
   {
     id: "cashflow",
     name: "Cashflow Beast",
     emoji: "🐂",
-    metricLabel: "Monthly NOI",
+    metricLabel: "Monthly NOI at the end",
     eligible: (r) => r.bankruptTurn === null,
     sortKey: (r) => r.noi,
     metric: (r) => `${gbpShort(r.noi)}/mo`,
@@ -207,10 +224,10 @@ export const BOARDS: BoardDef[] = [
     id: "fastBankrupt",
     name: "Fastest Bankruptcy",
     emoji: "💀",
-    metricLabel: "Turns survived",
+    metricLabel: "Months survived",
     eligible: (r) => r.bankruptTurn !== null,
     sortKey: (r) => -(r.bankruptTurn ?? 99),
-    metric: (r) => `turn ${r.bankruptTurn}`,
+    metric: (r) => `month ${r.bankruptTurn}`,
   },
   {
     id: "ownerTrust",
@@ -218,7 +235,7 @@ export const BOARDS: BoardDef[] = [
     emoji: "🤝",
     metricLabel: "Owner trust",
     eligible: (r) => r.bankruptTurn === null,
-    sortKey: (r) => r.trust * 1_000_000 + r.score,
+    sortKey: (r) => r.trust * 1_000_000 + survival(r),
     metric: (r) => `${r.trust}/100`,
   },
 ];

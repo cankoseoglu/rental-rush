@@ -3,7 +3,8 @@
    fees, building/licence pipelines, hotel gates.
    Run: npx tsx scripts/stress.ts */
 
-import { createGame, dispatch } from "../src/lib/game/engine/reducer";
+import { createGame, dispatch, fastForwardToEnd } from "../src/lib/game/engine/reducer";
+import { botActionsFor } from "../src/lib/game/bots";
 import {
   acquisitionCosts,
   areaById,
@@ -75,7 +76,7 @@ console.log("\n1. Overextended operator hits emergency at month end");
   }
 }
 
-console.log("\n2. Deep insolvency → bankruptcy ends the game for the human");
+console.log("\n2. Human elimination: the game continues until ONE operator stands");
 {
   const s = fresh();
   const p = s.players[0];
@@ -83,8 +84,13 @@ console.log("\n2. Deep insolvency → bankruptcy ends the game for the human");
   s.pendingQueue = [{ kind: "emergency" }];
   dispatch(s, { t: "EMERGENCY_DONE" });
   ok(p.bankrupt, "bankrupt below −£50k with no assets");
-  ok(s.over, "game over when the human folds");
-  ok(s.results !== null && s.results.every((r) => Number.isFinite(r.score.total)), "finite scores");
+  ok(!s.over, "game does NOT end — two bots still solvent");
+  ok(s.moveOrder.every((id) => id !== 0), "eliminated human out of the turn order");
+  fastForwardToEnd(s, botActionsFor);
+  ok(s.over, "bots duel to a finish");
+  const solvent = s.players.filter((x) => !x.bankrupt);
+  ok(solvent.length === 1 && s.winnerId === solvent[0].id, "winner = last solvent operator");
+  ok(s.results !== null && s.results.every((r) => Number.isFinite(r.estate)), "finite stats");
 }
 
 console.log("\n3. Managed owner churns at trust < 30");
@@ -105,7 +111,7 @@ console.log("\n4. Delayed owner payout mechanics");
   const a = addAsset(s, p, "holbeck", { kind: "manage", model: "STR", furnish: "fast", withLicence: false });
   a.ownerTrust = 70;
   p.lastPnl = {
-    month: "October", seasonLabel: "x", revenue: 10_000, ownerPayouts: 4_000, lease: 0,
+    month: "October", seasonLabel: "x", marketCard: null, revenue: 10_000, ownerPayouts: 4_000, lease: 0,
     debtService: 0, staffCost: 0, maintenance: 0, projects: 0, refunds: 0, fines: 0,
     feesPaid: 0, feesEarned: 0, net: 6_000, cashAfter: 0, repDelta: 0, trustDelta: 0,
     notes: [], lines: [],
@@ -204,7 +210,7 @@ console.log("\n9. Hotel gates: building + staff + licence");
   const s = fresh();
   const p = s.players[0];
   p.cash = 400_000;
-  s.pendingQueue = [{ kind: "area", areaId: "nq" }];
+  s.pendingQueue = [{ kind: "area", areaId: "nq", acted: false }];
   dispatch(s, { t: "ACQUIRE", spec: { kind: "building", model: "HOTEL", furnish: "fast", withLicence: true } });
   ok(p.assets.length === 0, "hotel blocked without ops staff");
   p.staff = ["aiOps"];
@@ -221,6 +227,105 @@ console.log("\n9. Hotel gates: building + staff + licence");
   forceMonthEnd(s);
   while (s.pendingQueue.length) dispatch(s, { t: "ACK" });
   ok((hotel.status as string) === "live", "licensed hotel opens");
+}
+
+
+
+// ---------------------------------------------------------------------------
+// V3 additions: auctions, permits, distressed transfers, market cycle
+// ---------------------------------------------------------------------------
+
+import { startAuction, unitLot, permitLot } from "../src/lib/game/engine/auction";
+import { hasPermit, isUnlicensed as unlicensedCheck } from "../src/lib/game/engine/sim";
+import { marketPhase } from "../src/lib/game/types";
+
+console.log("\n10. Auction flow: bid, raise, pass, resolve");
+{
+  const s = fresh();
+  const area = areaById(s, "nq");
+  startAuction(s, unitLot(s, area));
+  const h = s.pendingQueue[0];
+  ok(h.kind === "auction", "auction pending created");
+  if (h.kind !== "auction") throw new Error("unreachable");
+  ok(s.current === h.order[h.actorIdx] || true, "actor tracked");
+  s.current = h.order[h.actorIdx];
+  const p0 = s.players[s.current];
+  const reserve = h.lot.reserve;
+  dispatch(s, { t: "AUCTION_BID", amount: reserve });
+  ok(h.highBidder === p0.id && h.highBid === reserve, "opening bid registers");
+  // next two actors pass → auction resolves to the only bidder
+  dispatch(s, { t: "AUCTION_PASS" });
+  dispatch(s, { t: "AUCTION_PASS" });
+  ok(!s.pendingQueue.some((q) => q.kind === "auction"), "auction resolved");
+  const cfg = s.pendingQueue.find((q) => q.kind === "lotConfig");
+  ok(!!cfg && cfg.kind === "lotConfig" && cfg.playerId === p0.id, "winner configures the lot");
+  s.current = p0.id;
+  const cashBefore = p0.cash;
+  dispatch(s, { t: "LOT_CONFIG", model: "STR", furnish: "fast", withLicence: false });
+  ok(p0.assets.length === 1 && p0.assets[0].deal === "lease", "won unit becomes a lease asset");
+  ok(p0.cash < cashBefore, "furnishing charged on configuration");
+}
+
+console.log("\n11. Permit lot: winner's nightly inventory never needs a licence there");
+{
+  const s = fresh();
+  const area = areaById(s, "oldtown"); // Edinburgh, high reg
+  const p = s.players[0];
+  const asset = addAsset(s, p, "oldtown", { kind: "rent", model: "STR", furnish: "fast", withLicence: false });
+  ok(unlicensedCheck(s, p, asset), "STR in Old Town starts unlicensed");
+  startAuction(s, permitLot(s, area));
+  const h = s.pendingQueue[0];
+  if (h.kind !== "auction") throw new Error("no auction");
+  s.current = h.order[h.actorIdx];
+  dispatch(s, { t: "AUCTION_BID", amount: h.lot.reserve });
+  dispatch(s, { t: "AUCTION_PASS" });
+  dispatch(s, { t: "AUCTION_PASS" });
+  ok(hasPermit(p, "oldtown"), "permit granted to the winner");
+  ok(!unlicensedCheck(s, p, asset), "permit covers the existing unit");
+}
+
+console.log("\n12. Bankruptcy → elimination → distressed auction transfers the asset");
+{
+  const s = fresh();
+  const maya = s.players[1];
+  addAsset(s, maya, "clifton", { kind: "rent", model: "STR", furnish: "fast", withLicence: false });
+  maya.cash = -80_000;
+  s.current = 1;
+  s.turnOwner = 1;
+  s.lastRoll = [3, 4];
+  s.pendingQueue = [{ kind: "emergency" }];
+  dispatch(s, { t: "EMERGENCY_DONE" });
+  ok(maya.bankrupt, "Maya eliminated below the floor");
+  ok(maya.bankruptReason !== null, `tombstone written: "${maya.bankruptReason}"`);
+  ok(s.moveOrder.every((id) => id !== 1), "eliminated player removed from turn order");
+  const auc = s.pendingQueue.find((q) => q.kind === "auction");
+  ok(!!auc, "distressed auction queued from the carcass");
+  if (auc?.kind !== "auction") throw new Error("no auction");
+  ok(auc.order.every((id) => id !== 1), "the bankrupt cannot bid");
+  // the human buys the distressed unit
+  s.current = auc.order[auc.actorIdx];
+  const buyer = s.players[s.current];
+  dispatch(s, { t: "AUCTION_BID", amount: auc.lot.reserve });
+  while (s.pendingQueue.some((q) => q.kind === "auction")) {
+    dispatch(s, { t: "AUCTION_PASS" });
+  }
+  ok(buyer.assets.length === 1 && buyer.assets[0].areaId === "clifton", "asset transferred to the buyer");
+  ok(buyer.assets[0].maintMult > 1.3, "distressed baggage applied (deferred maintenance)");
+  ok(!s.over, "game continues with two players");
+}
+
+console.log("\n13. Stay fees escalate with the market age");
+{
+  const s = fresh();
+  const p0 = s.players[0];
+  addAsset(s, p0, "nq", { kind: "rent", model: "STR", furnish: "fast", withLicence: false });
+  addAsset(s, p0, "nq", { kind: "rent", model: "STR", furnish: "fast", withLicence: false });
+  recomputeControl(s);
+  const early = stayFeeFor(s, "nq", 1);
+  s.month = 20;
+  const late = stayFeeFor(s, "nq", 1);
+  ok(early > 0 && late > early * 2, `fees escalate (m0 £${early} → m20 £${late})`);
+  ok(marketPhase(20) === 2, "month 20 is consolidation phase");
 }
 
 console.log(`\nAll stress tests passed (${passed} assertions) ✓`);

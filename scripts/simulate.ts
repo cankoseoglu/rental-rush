@@ -1,5 +1,5 @@
-/* Headless V2 harness: plays full bot-only games and asserts invariants.
-   Run: npx tsx scripts/simulate.ts [games] [--verbose] */
+/* Headless V3 harness: winner-take-all. Plays full bot-only games and asserts
+   the elimination invariants. Run: npx tsx scripts/simulate.ts [games] [--verbose] */
 
 import { createGame, dispatch, type Action } from "../src/lib/game/engine/reducer";
 import { botActionsFor } from "../src/lib/game/bots";
@@ -9,6 +9,7 @@ import { liveUnitValue } from "../src/lib/game/engine/sim";
 
 const N = Number(process.argv[2] ?? 200);
 const VERBOSE = process.argv.includes("--verbose");
+const HARD_MONTH_CAP = 60; // balance must end games long before this
 
 interface Outcome {
   state: GameState;
@@ -22,7 +23,7 @@ function playGame(seedText: string): Outcome {
   let lastSig = "";
   let sameSig = 0;
 
-  while (!s.over && steps++ < 6000) {
+  while (!s.over && steps++ < 60_000 && s.month <= HARD_MONTH_CAP) {
     if (s.phase === "awaitRoll") {
       dispatch(s, { t: "ROLL" });
       continue;
@@ -31,9 +32,11 @@ function playGame(seedText: string): Outcome {
       dispatch(s, { t: "END_TURN" });
       continue;
     }
+    const h = s.pendingQueue[0];
     const sig = JSON.stringify([
       s.current,
-      s.pendingQueue[0]?.kind,
+      h?.kind,
+      h?.kind === "auction" ? `${h.round}:${h.actorIdx}:${h.highBid}:${h.passed.length}` : "",
       s.players[s.current].cash,
       s.pendingQueue.length,
       s.month,
@@ -41,7 +44,6 @@ function playGame(seedText: string): Outcome {
     sameSig = sig === lastSig ? sameSig + 1 : 0;
     lastSig = sig;
     if (sameSig > 14) {
-      const h = s.pendingQueue[0];
       const force: Action =
         h.kind === "area"
           ? { t: "CLOSE_AREA" }
@@ -49,7 +51,11 @@ function playGame(seedText: string): Outcome {
             ? { t: "DECLARE_BANKRUPTCY" }
             : h.kind === "referral"
               ? { t: "REFERRAL", accept: false }
-              : { t: "ACK" };
+              : h.kind === "auction"
+                ? { t: "AUCTION_PASS" }
+                : h.kind === "lotConfig"
+                  ? { t: "LOT_CONFIG", model: "MTR", furnish: "fast", withLicence: false }
+                  : { t: "ACK" };
       dispatch(s, force);
       return { state: s, steps, stalled: true };
     }
@@ -65,20 +71,14 @@ const assertFinite = (n: number, label: string, seed: string) => {
   if (!Number.isFinite(n)) throw new Error(`NaN/∞ in ${label} (seed ${seed}): ${n}`);
 };
 
-let bankruptcies = 0;
 let stalls = 0;
 let unfinished = 0;
-let totalAssets = 0;
-let totalUnitsLive = 0;
-let buildings = 0;
-let hotels = 0;
-let licApplied = 0;
-let emergencies = 0;
-let stayFeesTotal = 0;
-let controlledAreas = 0;
-const minCashes: number[] = [];
-const scores: number[] = [];
-const noises: number[] = [];
+let badWinnerGames = 0;
+let auctionsTotal = 0;
+let distressedSeen = 0;
+let permitsWon = 0;
+const endMonths: number[] = [];
+const winnerNames = new Map<string, number>();
 const archCount = new Map<string, number>();
 const pnlIdentityErrors: string[] = [];
 const controlErrors: string[] = [];
@@ -89,39 +89,39 @@ for (let i = 0; i < N; i++) {
   if (stalled) stalls++;
   if (!s.over) {
     unfinished++;
+    console.log(`  !! unfinished: ${seed} reached month ${s.month}`);
     continue;
   }
   if (!s.results) throw new Error(`no results (seed ${seed})`);
 
-  // control invariant: controller has the max live unit value
+  // THE invariant: exactly one solvent player, and they are the winner
+  const solvent = s.players.filter((p) => !p.bankrupt);
+  if (solvent.length !== 1 || s.winnerId !== solvent[0].id) badWinnerGames++;
+
+  endMonths.push(s.month);
+  const w = s.players[s.winnerId!];
+  winnerNames.set(w.name, (winnerNames.get(w.name) ?? 0) + 1);
+
   for (const area of s.areas) {
     const c = s.control[area.id];
     if (c === null) continue;
     const cv = liveUnitValue(s, c, area.id);
     for (const p of s.players) {
       if (p.id === c) continue;
-      const v = liveUnitValue(s, p.id, area.id);
-      if (v > cv) controlErrors.push(`seed ${seed} area ${area.id}: ${p.id} (${v}) > controller ${c} (${cv})`);
+      if (liveUnitValue(s, p.id, area.id) > cv)
+        controlErrors.push(`seed ${seed} area ${area.id}`);
     }
-    controlledAreas++;
   }
 
   for (const r of s.results) {
     const p = s.players[r.playerId];
-    for (const [k, v] of Object.entries(r.score)) assertFinite(v as number, `score.${k}`, seed);
     assertFinite(p.cash, "cash", seed);
-    scores.push(r.score.total);
-    noises.push(r.score.noi);
-    if (p.bankrupt) bankruptcies++;
-    totalAssets += p.assets.length + p.stats.assetsSold + p.stats.churnedOwners;
-    totalUnitsLive += r.unitsLive;
-    buildings += p.assets.filter((a) => a.kind === "building").length;
-    hotels += p.assets.filter((a) => a.model === "HOTEL").length;
-    licApplied += p.stats.licencesWon + p.stats.licencesRejected;
-    emergencies += p.stats.emergencies;
-    stayFeesTotal += p.stats.stayFeesPaid;
-    minCashes.push(Math.min(...p.cashHistory));
+    assertFinite(r.estate, "estate", seed);
+    assertFinite(r.noi, "noi", seed);
+    auctionsTotal += p.stats.auctionsWon;
+    permitsWon += p.permits.length;
     archCount.set(r.archetype, (archCount.get(r.archetype) ?? 0) + 1);
+    if (p.stats.biggestAuctionWin) distressedSeen++;
 
     if (p.lastPnl) {
       const l = p.lastPnl;
@@ -131,26 +131,17 @@ for (let i = 0; i < N; i++) {
       if (Math.abs(recon - l.net) > 2)
         pnlIdentityErrors.push(`seed ${seed} p${p.id}: net ${l.net} vs recon ${recon}`);
     }
-    if (p.monthsDone !== (p.bankrupt ? p.monthsDone : 10) && !p.bankrupt)
-      pnlIdentityErrors.push(`seed ${seed} p${p.id}: monthsDone ${p.monthsDone} != 10`);
   }
 }
 
-scores.sort((a, b) => a - b);
-minCashes.sort((a, b) => a - b);
+endMonths.sort((a, b) => a - b);
 const q = (arr: number[], p: number) => arr[Math.floor(p * (arr.length - 1))] ?? 0;
-const mean = (a: number[]) => a.reduce((x, y) => x + y, 0) / Math.max(1, a.length);
-const n = scores.length;
 
-console.log(`\n=== Rental Rush V2 simulation: ${N} games (${n} player-results) ===`);
-console.log(`unfinished: ${unfinished}   stalled: ${stalls}   control errors: ${controlErrors.length}`);
-console.log(`bankruptcy rate: ${((bankruptcies / n) * 100).toFixed(1)}%   emergencies/player: ${(emergencies / n).toFixed(2)}`);
-console.log(`assets touched/player: ${(totalAssets / n).toFixed(2)}   live units/player: ${(totalUnitsLive / n).toFixed(2)}`);
-console.log(`buildings held: ${(buildings / n).toFixed(2)}/player   hotels: ${(hotels / n).toFixed(2)}   licence outcomes: ${(licApplied / n).toFixed(2)}`);
-console.log(`stay fees paid/player: £${Math.round(stayFeesTotal / n)}`);
-console.log(`controlled areas/game: ${(controlledAreas / Math.max(1, N - unfinished)).toFixed(1)}/16`);
-console.log(`score p10/p50/p90: £${Math.round(q(scores, 0.1) / 1000)}k / £${Math.round(q(scores, 0.5) / 1000)}k / £${Math.round(q(scores, 0.9) / 1000)}k`);
-console.log(`mean NOI: £${Math.round(mean(noises))}/mo   min-cash p1/p10: £${Math.round(q(minCashes, 0.01) / 1000)}k / £${Math.round(q(minCashes, 0.1) / 1000)}k`);
+console.log(`\n=== Rental Rush V3 simulation: ${N} games ===`);
+console.log(`unfinished: ${unfinished}   stalled: ${stalls}   bad-winner games: ${badWinnerGames}   control errors: ${controlErrors.length}`);
+console.log(`game length (months) p10/p50/p90/max: ${q(endMonths, 0.1)} / ${q(endMonths, 0.5)} / ${q(endMonths, 0.9)} / ${endMonths[endMonths.length - 1] ?? "-"}`);
+console.log(`winners: ${[...winnerNames.entries()].map(([k, v]) => `${k} ${v}`).join(" · ")}`);
+console.log(`auction wins/game: ${(auctionsTotal / Math.max(1, N - unfinished)).toFixed(2)}   permits won: ${permitsWon}   distressed steals: ${distressedSeen}`);
 console.log(`archetypes:`);
 for (const [k, v] of [...archCount.entries()].sort((a, b) => b[1] - a[1])) {
   console.log(`  ${ARCHETYPES[k as keyof typeof ARCHETYPES].name.padEnd(22)} ${v}`);
@@ -158,10 +149,6 @@ for (const [k, v] of [...archCount.entries()].sort((a, b) => b[1] - a[1])) {
 if (pnlIdentityErrors.length) {
   console.log(`\n!! P&L identity errors (${pnlIdentityErrors.length}):`);
   pnlIdentityErrors.slice(0, 5).forEach((e) => console.log("   " + e));
-}
-if (controlErrors.length) {
-  console.log(`\n!! control errors:`);
-  controlErrors.slice(0, 5).forEach((e) => console.log("   " + e));
 }
 
 if (VERBOSE) {
@@ -171,16 +158,17 @@ if (VERBOSE) {
   s.results?.forEach((r) => {
     const p = s.players[r.playerId];
     console.log(
-      `${p.name.padEnd(5)} score £${Math.round(r.score.total / 1000)}k  cash £${Math.round(p.cash / 1000)}k  noi £${r.score.noi}/mo  assets ${p.assets.length} (${r.unitsLive} live units)  areas ${r.areasControlled}  arch ${r.archetype}${p.bankrupt ? "  BANKRUPT" : ""}`,
+      `${p.name.padEnd(5)} ${r.won ? "WINNER" : `out m${r.survivalMonth}`}  cash £${Math.round(p.cash / 1000)}k  units ${r.unitsLive}  areas ${r.areasControlled}  sets ${r.citySets}  kills ${r.bankruptciesCaused}  arch ${r.archetype}`,
     );
+    if (r.tombstone) console.log(`      🪦 ${r.tombstone}`);
   });
 }
 
 const fail =
   unfinished > 0 ||
+  badWinnerGames > 0 ||
   pnlIdentityErrors.length > 0 ||
   controlErrors.length > 0 ||
-  scores.some((s) => !Number.isFinite(s)) ||
   stalls > N * 0.02;
 if (fail) {
   console.error("\nSIMULATION FAILED");

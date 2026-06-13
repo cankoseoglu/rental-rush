@@ -1,5 +1,8 @@
 "use client";
 
+// The finale. There is no score: the last solvent operator wins, the fallen
+// get tombstones, and everything else is post-game bragging material.
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { useGame } from "@/lib/store";
@@ -11,8 +14,9 @@ import {
   scoreStore,
   type SavedRun,
 } from "@/lib/game/leaderboard";
-import { drawShareCard, downloadShareCard, nativeShare, shareText, type ShareData } from "@/lib/game/share";
+import { downloadShareCard, nativeShare, shareText, type ShareData, drawShareCard } from "@/lib/game/share";
 import Leaderboard from "./Leaderboard";
+import clsx from "clsx";
 
 export default function GameOverScreen() {
   const game = useGame((s) => s.game);
@@ -27,10 +31,14 @@ export default function GameOverScreen() {
   const human = game?.players[0];
   const results = game?.results ?? [];
   const humanResult = results.find((r) => r.playerId === 0);
+  const winner = game ? game.players[game.winnerId ?? 0] : null;
   const won = game?.winnerId === 0;
 
-  const standings = useMemo(
-    () => [...results].sort((a, b) => b.score.total - a.score.total),
+  const fallen = useMemo(
+    () =>
+      results
+        .filter((r) => r.bankrupt)
+        .sort((a, b) => a.survivalMonth - b.survivalMonth),
     [results],
   );
 
@@ -42,18 +50,16 @@ export default function GameOverScreen() {
     return { result: humanResult, won, rank, nickname: nickname || "You" };
   }, [humanResult, savedRun, won, nickname, game]);
 
-  // confetti for winners
   useEffect(() => {
     if (!won || confettiFired.current) return;
     confettiFired.current = true;
     void (async () => {
       const confetti = (await import("canvas-confetti")).default;
-      confetti({ particleCount: 120, spread: 75, origin: { y: 0.25 }, colors: ["#B9F33E", "#FF7AC3", "#6FA8FF", "#FAF6EA"] });
-      setTimeout(() => confetti({ particleCount: 60, spread: 100, origin: { y: 0.4 } }), 450);
+      confetti({ particleCount: 140, spread: 75, origin: { y: 0.25 }, colors: ["#B9F33E", "#FF7AC3", "#6FA8FF", "#FAF6EA"] });
+      setTimeout(() => confetti({ particleCount: 70, spread: 100, origin: { y: 0.4 } }), 450);
     })();
   }, [won]);
 
-  // pre-render share card
   useEffect(() => {
     if (!shareData) return;
     let alive = true;
@@ -63,9 +69,8 @@ export default function GameOverScreen() {
     };
   }, [shareData]);
 
-  if (!game || !human || !humanResult) return null;
+  if (!game || !human || !humanResult || !winner) return null;
   const arch = ARCHETYPES[humanResult.archetype];
-  const s = humanResult.score;
 
   const save = () => {
     if (!nickname.trim() || savedRun) return;
@@ -74,65 +79,66 @@ export default function GameOverScreen() {
     setSavedRun(run);
   };
 
-  const breakdown: Array<[string, number]> = [
-    ["Cash", s.cash],
-    ["Property equity", s.equity],
-    ["12 × monthly NOI", s.noiValue],
-    ["Owner contract value", s.ownerContractValue],
-    ["Reputation value", s.reputationValue],
-    ["Loan debt", -s.debt],
-    ["Risk penalties", -s.riskPenalty],
-    ["Bankruptcy penalty", -s.bankruptcyPenalty],
-    ["Investor's 12%", -s.investorCut],
+  const statRows: Array<[string, string]> = [
+    ["Survived to", `Month ${humanResult.survivalMonth}`],
+    ["Final cash", gbpFull(humanResult.cash)],
+    ["Live units", `${humanResult.unitsLive} (${(["STR", "MTR", "LTR", "HOTEL"] as const).filter((m) => humanResult.unitsByModel[m] > 0).map((m) => `${humanResult.unitsByModel[m]} ${m}`).join(" · ") || "none"})`],
+    ["Areas controlled", `${humanResult.areasControlled}${humanResult.citySets > 0 ? ` · ${humanResult.citySets} city set${humanResult.citySets > 1 ? "s" : ""}` : ""}`],
+    ["Monthly net cash flow", `${humanResult.noi >= 0 ? "+" : ""}${gbp(humanResult.noi)}/mo`],
+    ["Total rent collected", gbp(humanResult.rentCollected)],
+    ["Debt", gbp(humanResult.debt)],
+    ["Bankruptcies caused", `${humanResult.bankruptciesCaused}`],
   ];
 
   return (
     <div className="mx-auto max-w-xl px-4 pb-16 pt-10" data-testid="gameover-screen">
       <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="text-center">
         <div className="text-[0.64rem] font-bold uppercase tracking-[0.22em] text-cream-50/50">
-          The year is over
+          {won ? "The market is yours" : "The market has spoken"}
         </div>
         <h1 className="font-display mt-1 text-3xl font-extrabold leading-tight">
           {won ? (
             <>
-              You built the strongest <span className="text-lime-400">empire</span> 👑
-            </>
-          ) : human.bankrupt ? (
-            <>
-              The bank took the <span className="text-coral-400">keys</span> 💀
+              Winner: <span className="text-lime-400">You</span> 👑
             </>
           ) : (
             <>
-              {game.players[game.winnerId!].name} takes the crown
-              {game.players[game.winnerId!].emoji}
+              Winner: <span style={{ color: winner.color }}>{winner.name}</span> {winner.emoji}
             </>
           )}
         </h1>
+        <div className="mt-1 text-[0.86rem] font-semibold text-cream-50/70">
+          Last solvent operator standing{won && fallen.length ? ` — you bankrupted ${fallen.map((f) => game.players[f.playerId].name).join(" and ")}` : ""}.
+        </div>
       </motion.div>
 
-      {/* standings */}
-      <div className="mt-6 space-y-1.5">
-        {standings.map((r, i) => {
-          const p = game.players[r.playerId];
-          return (
-            <motion.div
-              key={r.playerId}
-              initial={{ opacity: 0, x: -14 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.12 * i }}
-              className={`flex items-center gap-3 rounded-2xl px-3.5 py-2.5 ${p.isHuman ? "border border-lime-400/50 bg-lime-400/8" : "panel"}`}
-            >
-              <span className="text-lg">{i === 0 ? "🥇" : i === 1 ? "🥈" : "🥉"}</span>
-              <span className="text-lg">{p.emoji}</span>
-              <span className="min-w-0 flex-1 truncate text-sm font-bold" style={{ color: p.color }}>
-                {p.name}
-                {p.bankrupt && <span className="ml-1.5 text-[0.62rem] text-coral-400">BANKRUPT</span>}
-              </span>
-              <span className="font-ledger text-base font-bold">{gbp(r.score.total)}</span>
-            </motion.div>
-          );
-        })}
-      </div>
+      {/* tombstones */}
+      {fallen.length > 0 && (
+        <div className="mt-6 space-y-2">
+          {fallen.map((r, i) => {
+            const p = game.players[r.playerId];
+            return (
+              <motion.div
+                key={r.playerId}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.15 + 0.12 * i }}
+                className="rounded-2xl border border-line bg-ink-850/80 px-3.5 py-2.5"
+              >
+                <div className="flex items-center gap-2 text-sm font-bold" style={{ color: p.color }}>
+                  🪦 {p.emoji} {p.name}
+                  <span className="text-[0.62rem] font-semibold text-cream-50/45">
+                    out in month {r.survivalMonth}
+                  </span>
+                </div>
+                <div className="mt-0.5 text-[0.74rem] leading-snug text-cream-50/65">
+                  {r.tombstone ?? "Ran out of road."}
+                </div>
+              </motion.div>
+            );
+          })}
+        </div>
+      )}
 
       {/* archetype */}
       <motion.div
@@ -152,44 +158,39 @@ export default function GameOverScreen() {
         <div className="mx-auto mt-1 max-w-sm text-[0.8rem] leading-snug text-cream-50/70">{arch.blurb}</div>
         <div className="mt-2 flex flex-wrap items-center justify-center gap-1.5">
           <span className="chip">{humanResult.strategyLabel}</span>
-          <span className="chip">🏠 {humanResult.unitsLive} live units</span>
-          <span className="chip">🚩 {humanResult.areasControlled} areas</span>
-          <span className="chip">🤝 {humanResult.managedUnits} managed</span>
+          {humanResult.strongestArea && <span className="chip">💪 {humanResult.strongestArea}</span>}
           <span className="chip">⚙️ ops {humanResult.opsUsed.toFixed(1)}/{humanResult.opsCap}</span>
         </div>
       </motion.div>
 
-      {/* the books */}
+      {/* post-game stats (NOT a score — just the story) */}
       <div className="card-cream mt-5 p-5">
-        <div className="mb-1 flex items-baseline justify-between">
-          <span className="font-display text-lg font-bold">Rental Empire Score</span>
-          <span className="font-ledger text-2xl font-extrabold text-lime-900">{gbpFull(s.total)}</span>
+        <div className="mb-2 flex items-baseline justify-between">
+          <span className="font-display text-lg font-bold">Your run, on paper</span>
+          <span className="rounded-full bg-creamink/8 px-2.5 py-1 text-[0.6rem] font-bold uppercase tracking-wider text-creamink/55">
+            post-game stats
+          </span>
         </div>
-        <div className="space-y-1 border-t border-dashed border-creamink/25 pt-2">
-          {breakdown.map(([label, v], i) =>
-            v === 0 ? null : (
-              <motion.div
-                key={label}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: 0.5 + i * 0.07 }}
-                className="flex justify-between text-[0.8rem]"
-              >
-                <span className="text-creamink/70">{label}</span>
-                <span className={`font-ledger font-semibold ${v < 0 ? "text-coral-500" : ""}`}>
-                  {v < 0 ? "−" : "+"}£{Math.abs(v).toLocaleString("en-GB")}
-                </span>
-              </motion.div>
-            ),
-          )}
-        </div>
-        <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 border-t-2 border-creamink/20 pt-2.5 text-[0.74rem]">
-          <div className="flex justify-between"><span className="text-creamink/60">Monthly NOI</span><span className="font-ledger font-bold">{gbpFull(s.noi)}/mo</span></div>
-          <div className="flex justify-between"><span className="text-creamink/60">Cash</span><span className="font-ledger font-bold">{gbp(s.cash)}</span></div>
-          <div className="flex justify-between"><span className="text-creamink/60">Reputation</span><span className="font-ledger font-bold">{human.rep}/100</span></div>
-          <div className="flex justify-between"><span className="text-creamink/60">Owner trust</span><span className="font-ledger font-bold">{human.trust}/100</span></div>
+        <div className="space-y-1.5">
+          {statRows.map(([k, v], i) => (
+            <motion.div
+              key={k}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.5 + i * 0.06 }}
+              className="flex items-baseline justify-between gap-3"
+            >
+              <span className="text-[0.8rem] text-creamink/70">{k}</span>
+              <span className="font-ledger text-right text-[0.84rem] font-semibold">{v}</span>
+            </motion.div>
+          ))}
         </div>
         <div className="mt-3 space-y-1 border-t border-dashed border-creamink/25 pt-2 text-[0.78rem]">
+          {humanResult.biggestAuctionWin && (
+            <div>
+              🔨 <span className="font-semibold">Auction coup:</span> {humanResult.biggestAuctionWin}
+            </div>
+          )}
           <div>
             🏆 <span className="font-semibold">Biggest win:</span> {humanResult.biggestWin}
           </div>
@@ -202,7 +203,7 @@ export default function GameOverScreen() {
       {/* share */}
       <div className="mt-5">
         <div className="mb-1.5 text-[0.66rem] font-bold uppercase tracking-wider text-cream-50/45">
-          Brag responsibly
+          {won ? "Brag responsibly" : "Misery loves company"}
         </div>
         {cardUrl && (
           // eslint-disable-next-line @next/next/no-img-element
@@ -212,10 +213,7 @@ export default function GameOverScreen() {
           <button onClick={() => shareData && void downloadShareCard(shareData)} className="btn-dark h-10 text-[0.74rem] font-bold">
             ⬇ Download
           </button>
-          <button
-            onClick={() => shareData && void nativeShare(shareData)}
-            className="btn-dark h-10 text-[0.74rem] font-bold"
-          >
+          <button onClick={() => shareData && void nativeShare(shareData)} className="btn-dark h-10 text-[0.74rem] font-bold">
             📤 Share
           </button>
           <button
@@ -236,10 +234,8 @@ export default function GameOverScreen() {
       <div className="panel mt-5 p-4">
         {!savedRun ? (
           <>
-            <div className="text-sm font-bold">Save your score to the leaderboard?</div>
-            <p className="mt-0.5 text-[0.7rem] text-cream-50/55">
-              Nickname only. No account, no email, no nonsense.
-            </p>
+            <div className="text-sm font-bold">Save your run to the leaderboard?</div>
+            <p className="mt-0.5 text-[0.7rem] text-cream-50/55">Nickname only. No account, no email, no nonsense.</p>
             <div className="mt-2 flex gap-1.5">
               <input
                 value={nickname}
@@ -256,11 +252,12 @@ export default function GameOverScreen() {
         ) : (
           <div className="flex flex-wrap items-center gap-1.5 text-sm font-bold">
             <span>Saved as {savedRun.nickname} ✓</span>
-            {(["overall", "daily", "strKing", "cashflow", "ownerTrust"] as const).map((b) => {
+            {(["overall", "daily", "strKing", "cashflow", "ownerTrust", "fastBankrupt"] as const).map((b) => {
               const r = rankOnBoard(b, savedRun);
               return r && r <= 15 ? (
-                <span key={b} className="chip text-lime-300">
-                  #{r} {b === "overall" ? "Overall" : b === "daily" ? "Daily" : b === "strKing" ? "STR King" : b === "cashflow" ? "Cashflow" : "Trust"}
+                <span key={b} className={clsx("chip", b === "fastBankrupt" ? "text-coral-400" : "text-lime-300")}>
+                  #{r}{" "}
+                  {b === "overall" ? "Overall" : b === "daily" ? "Daily" : b === "strKing" ? "STR King" : b === "cashflow" ? "Cashflow" : b === "ownerTrust" ? "Trust" : "💀 Fastest out"}
                 </span>
               ) : null;
             })}
@@ -269,16 +266,12 @@ export default function GameOverScreen() {
       </div>
 
       <div className="mt-4">
-        <Leaderboard
-          highlightRunId={savedRun?.id}
-          initialBoard={game.mode === "daily" ? "daily" : "overall"}
-        />
+        <Leaderboard highlightRunId={savedRun?.id} initialBoard={game.mode === "daily" ? "daily" : "overall"} />
       </div>
 
-      {/* actions */}
       <div className="mt-6 space-y-2">
         <button onClick={() => newGame(game.mode)} className="btn-primary h-12 w-full text-base">
-          Run it back →
+          {won ? "Defend the crown →" : "Run it back →"}
         </button>
         <div className="grid grid-cols-2 gap-2">
           <button onClick={() => newGame(game.mode === "daily" ? "quick" : "daily")} className="btn-dark h-11 text-sm">

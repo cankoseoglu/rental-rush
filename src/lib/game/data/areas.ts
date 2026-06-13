@@ -48,9 +48,6 @@ export function generateAreas(rng: () => number): AreaDef[] {
     const baseOcc = Math.round(clamp(s.baseOcc + jitter(rng, -0.03, 0.04), 0.55, 0.85) * 100) / 100;
     const mtrRent = round10(baseAdr * 30 * 0.42);
     const ltrRent = round10(baseAdr * 30 * 0.3);
-    const stayFee =
-      (s.level === 1 ? 400 : s.level === 2 ? 700 : 1_100) +
-      (s.cityId === "lon" || s.cityId === "edi" ? 150 : 0);
     return {
       id: s.id,
       name: s.name,
@@ -63,7 +60,6 @@ export function generateAreas(rng: () => number): AreaDef[] {
       baseOcc,
       mtrRent,
       ltrRent,
-      stayFee,
       buildingUnits: 3 + s.level + (s.demand - 1), // 4-8 units
     };
   });
@@ -81,7 +77,7 @@ export const TILES: Tile[] = [
   { idx: 6, kind: "corner", label: "City Hall", emoji: "🏛️", eventCategory: "regulation" },
   { idx: 7, kind: "area", label: "Northern Quarter", emoji: "🏘️", areaId: "nq" },
   { idx: 8, kind: "area", label: "Ancoats", emoji: "🏘️", areaId: "ancoats" },
-  { idx: 9, kind: "event", label: "Market wire", emoji: "📈", eventCategory: "market" },
+  { idx: 9, kind: "auction", label: "Auction house", emoji: "🔨" },
   { idx: 10, kind: "area", label: "Stokes Croft", emoji: "🏘️", areaId: "stokes" },
   { idx: 11, kind: "area", label: "Clifton", emoji: "🏘️", areaId: "clifton" },
   { idx: 12, kind: "corner", label: "The Exchange", emoji: "🏦", eventCategory: "market" },

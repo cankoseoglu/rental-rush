@@ -16,7 +16,7 @@ import {
   totalLoanDebt,
 } from "@/lib/game/engine/sim";
 import { creditLeft } from "@/lib/game/engine/reducer";
-import { BANK_RATE, BRIDGE_RATE, INVESTOR_CASH } from "@/lib/game/types";
+import { BANK_RATE, marketPhase } from "@/lib/game/types";
 import { Sheet, Bar, AreaArt, ModelTag, StatusTag } from "./ui";
 import clsx from "clsx";
 
@@ -294,7 +294,7 @@ function Bank() {
   const openSheet = useGame((s) => s.openSheet);
   const p = game.players[0];
   const actionable = game.current === 0 && !ui.busy && !game.over;
-  const left = creditLeft(p);
+  const left = creditLeft(game, p);
   const refis = p.assets.filter((a) => a.deal === "buy" && Math.round(a.value * 0.8) > a.mortgage + 5000);
 
   return (
@@ -344,7 +344,8 @@ function Bank() {
       </div>
 
       <div className="mb-1 text-[0.66rem] font-bold uppercase tracking-wider text-coral-400/90">
-        Bridge loan · {(BRIDGE_RATE * 100).toFixed(1)}%/mo — desperate money
+        Bridge loan · {(game.market.bridgeRatePm * 100).toFixed(1)}%/mo — desperate money
+        {marketPhase(game.month) === 2 && " (and getting worse)"}
       </div>
       <div className="mb-3 grid grid-cols-3 gap-1.5">
         <button
@@ -383,16 +384,6 @@ function Bank() {
         </>
       )}
 
-      {!p.investorTaken && (
-        <button
-          disabled={!actionable}
-          onClick={() => act({ t: "INVESTOR" })}
-          className="panel mb-1 w-full border-violet-400/40 px-3 py-2.5 text-left"
-        >
-          <div className="text-[0.8rem] font-bold text-violet-400">😇 Angel investor · +{gbp(INVESTOR_CASH)} now</div>
-          <div className="text-[0.7rem] text-cream-50/55">They take 12% of your final Rental Empire Score. No repayments.</div>
-        </button>
-      )}
       {!actionable && (
         <p className="mt-2 text-center text-[0.66rem] text-cream-50/40">The bank answers on your turn.</p>
       )}

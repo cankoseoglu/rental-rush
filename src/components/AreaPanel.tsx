@@ -512,6 +512,13 @@ function MyAssetRow({ asset: a, backOffice }: { asset: Asset; backOffice: boolea
                 ? `Exit −${gbp(a.monthlyFixed)}`
                 : "Hand back"}
           </button>
+          <button
+            onClick={() => act({ t: "AUCTION_MY_ASSET", assetId: a.id })}
+            className="chip text-violet-400"
+            title="Rivals bid over 3 rounds; you keep the proceeds. No bids = you keep the asset."
+          >
+            🔨 Auction it
+          </button>
         </div>
       )}
     </div>

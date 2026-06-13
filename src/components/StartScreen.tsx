@@ -8,10 +8,10 @@ import Leaderboard from "./Leaderboard";
 import { Sheet } from "./ui";
 
 const STEPS = [
-  { emoji: "🎲", title: "Roll & claim areas", body: "16 neighbourhoods. Stack units, take control, charge rivals stay fees on your turf." },
-  { emoji: "🤝", title: "Pick your angle", body: "Rent, buy, manage — or lease whole buildings. Run each as STR, MTR, LTR or Hotel Mode." },
-  { emoji: "🏗️", title: "Race the pipelines", body: "Furnishing fast or slow, licences that get rejected, buildings burning cash before they open." },
-  { emoji: "🧾", title: "Survive month end", body: "Every month the books close for everyone: revenue, payroll, projects, fines. Winter bites first." },
+  { emoji: "🎲", title: "Claim areas, charge fees", body: "16 neighbourhoods. Control the turf and rivals pay you every time they land — fees only grow." },
+  { emoji: "🔨", title: "Fight at auction", body: "Units, buildings, owner mandates, permits — and the carcasses of bankrupt rivals." },
+  { emoji: "📉", title: "Outlast the market", body: "A market-cycle deck tightens every month: rates, crackdowns, funding winters, consolidation." },
+  { emoji: "💀", title: "Bankrupt them all", body: "No points. No final score. The last solvent operator standing takes everything." },
 ];
 
 export default function StartScreen() {
@@ -47,8 +47,8 @@ export default function StartScreen() {
           · Operator Mode ·
         </div>
         <p className="text-balance mx-auto mt-4 max-w-sm text-[0.92rem] leading-relaxed text-cream-50/75">
-          Claim neighbourhoods, stack units, lease whole buildings and flip them to Hotel Mode.
-          Hire before the chaos, survive winter and the council — and out-build two rival operators.
+          Claim neighbourhoods, stack units, lease buildings, flip them to Hotel Mode — and
+          squeeze your rivals with stay fees and auctions until they fold. Last solvent operator wins.
         </p>
       </motion.div>
 

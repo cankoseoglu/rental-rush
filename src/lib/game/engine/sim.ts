@@ -15,9 +15,11 @@ import type {
   PlayerState,
 } from "../types";
 import {
+  CONTROL_POINTS,
   FURNISH_SPECS,
   HOTEL_ADR_MULT,
   HOTEL_OVERHEAD_PER_UNIT,
+  marketPhase,
   MGMT_FEE,
   OPS_PER_UNIT,
   BUY_CASH_PCT,
@@ -83,9 +85,14 @@ export const totalDebt = (p: PlayerState): number =>
 export const equity = (p: PlayerState): number =>
   p.assets.reduce((s, a) => (a.deal === "buy" ? s + a.value - a.mortgage : s), 0);
 
+/** Auction-won area permits stand in for asset licences. */
+export const hasPermit = (p: PlayerState, areaId: string): boolean =>
+  p.permits.includes(areaId);
+
 /** STR/HOTEL operating without the right licence in a high-reg area. */
 export const isUnlicensed = (state: GameState, p: PlayerState, a: Asset): boolean => {
   const area = areaById(state, a.areaId);
+  if (hasPermit(p, a.areaId)) return false;
   if (a.model === "HOTEL") return a.licence !== "approved";
   return (
     a.model === "STR" &&
@@ -95,22 +102,40 @@ export const isUnlicensed = (state: GameState, p: PlayerState, a: Asset): boolea
   );
 };
 
+/** Does this player control BOTH areas of the city (a colour set)? */
+export function citySetOwned(state: GameState, playerId: number, cityId: string): boolean {
+  const areas = state.areas.filter((a) => a.cityId === cityId);
+  return areas.length > 0 && areas.every((a) => state.control[a.id] === playerId);
+}
+
+export const citySetCount = (state: GameState, playerId: number): number => {
+  const cities = [...new Set(state.areas.map((a) => a.cityId))];
+  return cities.filter((c) => citySetOwned(state, playerId, c)).length;
+};
+
 function modMults(a: Asset, p: PlayerState, state: GameState, cityId: string) {
   let occ = 1;
   let adr = 1;
   let rent = 1;
-  const all = [...a.mods, ...p.mods, ...(state.market.cityMods[cityId] ?? [])];
+  let cost = 1;
+  const all = [
+    ...a.mods,
+    ...p.mods,
+    ...(state.market.cityMods[cityId] ?? []),
+    ...state.market.globalMods,
+  ];
   for (const m of all) {
     if (m.occMult) occ *= m.occMult;
     if (m.adrMult) adr *= m.adrMult;
     if (m.rentMult) rent *= m.rentMult;
+    if (m.costMult) cost *= m.costMult;
   }
-  return { occ, adr, rent };
+  return { occ, adr, rent, cost };
 }
 
 export function overloadPenaltyFor(p: PlayerState): number {
   const over = playerLoad(p) - opsCapacity(p);
-  return over > 0 ? Math.min(0.18, over * 0.035) : 0;
+  return over > 0 ? Math.min(0.18, over * 0.018) : 0;
 }
 
 /**
@@ -175,6 +200,7 @@ export function simulateAssetMonth(
         mods.adr;
       gross = adr * 30 * occ * a.units;
       varCost = gross * (hotel ? 0.22 : cleaners ? 0.13 : 0.17);
+      if (citySetOwned(state, p.id, area.cityId)) varCost *= 0.92; // local density
       if (hotel) overhead = HOTEL_OVERHEAD_PER_UNIT * a.units;
     } else if (a.model === "MTR") {
       const repFactor = 1 + (p.rep - 70) * 0.0015;
@@ -183,8 +209,9 @@ export function simulateAssetMonth(
       adr = gross / 30 / a.units;
       varCost = gross * (cleaners ? 0.055 : 0.07);
     } else {
-      occ = 0.99;
-      gross = area.ltrRent * (p.rep < 40 ? 0.95 : 1) * a.units;
+      // long lets are defensive, not immune: brutal markets bring void periods
+      occ = clamp(0.99 * Math.sqrt(Math.min(1, mods.occ)), 0.6, 0.99);
+      gross = area.ltrRent * (p.rep < 40 ? 0.95 : 1) * occ * a.units;
       adr = gross / 30 / Math.max(1, a.units);
       varCost = gross * 0.035;
     }
@@ -198,6 +225,10 @@ export function simulateAssetMonth(
       a.maintMult *
       maintRoll *
       (coord ? 0.6 : 1);
+    // market-cycle pressure on operating costs
+    varCost *= mods.cost;
+    maint *= mods.cost;
+    overhead += state.market.insurancePerUnit * a.units;
   }
 
   let fee = 0;
@@ -238,13 +269,21 @@ export function simulateAssetMonth(
 
 // --- area control ------------------------------------------------------------
 
+/** Control points for one asset: model-weighted LIVE presence + upgrade bonus. */
+export function assetControlPoints(a: Asset): number {
+  if (a.status === "suspended") return CONTROL_POINTS[a.model] * a.units * 0.3;
+  if (a.status !== "live") return 0;
+  const premium = a.furnishQ >= 1.05 ? 1.15 : 1;
+  return CONTROL_POINTS[a.model] * a.units * premium;
+}
+
 export function liveUnitValue(state: GameState, playerId: number, areaId: string): number {
-  const area = areaById(state, areaId);
   const p = state.players[playerId];
   if (p.bankrupt) return 0;
-  return p.assets.reduce(
-    (s, a) => (a.areaId === areaId && a.status === "live" ? s + a.units * area.unitPrice : s),
-    0,
+  return (
+    Math.round(
+      p.assets.reduce((s, a) => (a.areaId === areaId ? s + assetControlPoints(a) : s), 0) * 100,
+    ) / 100
   );
 }
 
@@ -254,7 +293,7 @@ export function areaUnits(state: GameState, playerId: number, areaId: string): n
   return p.assets.reduce((s, a) => (a.areaId === areaId ? s + a.units : s), 0);
 }
 
-/** Controller = highest LIVE unit value; incumbent keeps ties. */
+/** Controller = most control points (live, model-weighted); incumbent keeps ties. */
 export function recomputeControl(state: GameState) {
   for (const area of state.areas) {
     const incumbent = state.control[area.id] ?? null;
@@ -275,16 +314,38 @@ export function recomputeControl(state: GameState) {
   }
 }
 
+/**
+ * Stay/market fee: the player-vs-player pressure. Scales with area value,
+ * the controller's live book and model mix, city-set dominance, demand and
+ * the market phase. This is what bankrupts careless visitors late-game.
+ */
 export function stayFeeFor(state: GameState, areaId: string, visitorId: number): number {
   const controller = state.control[areaId];
   if (controller === null || controller === undefined || controller === visitorId) return 0;
   const area = areaById(state, areaId);
-  const liveUnits = state.players[controller].assets.reduce(
-    (s, a) => (a.areaId === areaId && a.status === "live" ? s + a.units : s),
-    0,
-  );
+  const c = state.players[controller];
+  const liveAssets = c.assets.filter((a) => a.areaId === areaId && a.status === "live");
+  const liveUnits = liveAssets.reduce((s, a) => s + a.units, 0);
   if (liveUnits === 0) return 0;
-  return Math.round(area.stayFee * Math.min(2, 1 + 0.15 * (liveUnits - 1)));
+  const hotelUnits = liveAssets.reduce((s, a) => (a.model === "HOTEL" ? s + a.units : s), 0);
+  const premiumUnits = liveAssets.reduce((s, a) => (a.furnishQ >= 1.05 ? s + a.units : s), 0);
+
+  // fees keep escalating as the market ages — this is the endgame engine
+  // that eventually bleeds the weaker operator out
+  const ageMult = Math.min(4, 1 + Math.max(0, state.month - 6) * 0.12);
+  const cap = 15_000 + Math.max(0, state.month - 12) * 1_000;
+
+  const base = [0, 800, 1_400, 2_200][area.level];
+  let fee =
+    base *
+    (1 + 0.18 * (liveUnits - 1)) *
+    (1 + 0.3 * (hotelUnits / Math.max(1, liveUnits))) *
+    (1 + 0.1 * (premiumUnits / Math.max(1, liveUnits))) *
+    (citySetOwned(state, controller, area.cityId) ? 1.75 : 1) *
+    (state.market.demandSpike ? 1.3 : 1) *
+    ageMult;
+  fee = Math.min(Math.min(35_000, cap), fee);
+  return Math.round(fee / 50) * 50;
 }
 
 // --- acquisition factory & costs ----------------------------------------------
@@ -350,17 +411,19 @@ export function acquisitionCosts(
   area: AreaDef,
   spec: AcquisitionSpec,
   p: PlayerState,
+  state?: GameState, // when provided, city-set sourcing discount applies
 ): AcquisitionCosts {
   const f = FURNISH_SPECS[spec.furnish];
+  const sourcing = state && citySetOwned(state, p.id, area.cityId) ? 0.9 : 1;
   if (spec.kind === "manage") {
     return {
       kind: spec.kind,
       deal: "manage",
       assetKind: "unit",
       units: 1,
-      cashNow: 2_500,
+      cashNow: Math.round(2_500 * sourcing),
       furnishCost: 0,
-      setupCost: 2_500,
+      setupCost: Math.round(2_500 * sourcing),
       monthlyFixed: 0,
       mortgage: 0,
       monthsToLive: 0, // owner's furniture — live immediately
@@ -370,7 +433,7 @@ export function acquisitionCosts(
   }
   if (spec.kind === "building") {
     const units = area.buildingUnits;
-    const setup = Math.round(8_000 + units * area.ltrRent * 2.2);
+    const setup = Math.round((8_000 + units * area.ltrRent * 2.2) * sourcing);
     const furnishCost = Math.round(f.costPerUnit(area.level) * units * 0.85);
     return {
       kind: spec.kind,
@@ -394,9 +457,9 @@ export function acquisitionCosts(
       deal: "buy",
       assetKind: "unit",
       units: 1,
-      cashNow: Math.round(area.unitPrice * BUY_CASH_PCT) + furnishCost,
+      cashNow: Math.round(area.unitPrice * BUY_CASH_PCT * sourcing) + furnishCost,
       furnishCost,
-      setupCost: Math.round(area.unitPrice * BUY_CASH_PCT),
+      setupCost: Math.round(area.unitPrice * BUY_CASH_PCT * sourcing),
       monthlyFixed: 0,
       mortgage: Math.round(area.unitPrice * MORTGAGE_LTV),
       monthsToLive: f.months("unit"),
@@ -407,14 +470,15 @@ export function acquisitionCosts(
   // rent (single-unit arbitrage)
   const lease = Math.round(area.ltrRent * 1.05);
   const furnishCost = f.costPerUnit(area.level);
+  const rentSetup = Math.round((lease * 2 + 1_000) * sourcing);
   return {
     kind: spec.kind,
     deal: "lease",
     assetKind: "unit",
     units: 1,
-    cashNow: lease * 2 + 1_000 + furnishCost,
+    cashNow: rentSetup + furnishCost,
     furnishCost,
-    setupCost: lease * 2 + 1_000,
+    setupCost: rentSetup,
     monthlyFixed: lease,
     mortgage: 0,
     monthsToLive: f.months("unit"),
@@ -483,7 +547,7 @@ export function projectAcquisition(
   area: AreaDef,
   spec: AcquisitionSpec,
 ): AcquisitionProjection {
-  const costs = acquisitionCosts(area, spec, p);
+  const costs = acquisitionCosts(area, spec, p, state);
   const ghost = makeAsset(state, area, spec, costs, p.id, "ghost");
   ghost.status = "live";
   // plan against the post-live load — pipeline assets WILL come online

@@ -110,10 +110,12 @@ export async function drawShareCard(data: ShareData): Promise<HTMLCanvasElement>
   ctx.textAlign = "left";
 
   // headline
-  const scoreTxt = gbpFull(Math.max(0, data.result.score.total));
+  const scoreTxt = data.won ? `Month ${data.result.survivalMonth}` : `month ${data.result.survivalMonth}`;
   ctx.fillStyle = "#F4F0E4";
   ctx.font = `700 78px ${display}`;
-  const headline = `I built a ${scoreTxt} rental empire in 10 minutes.`;
+  const headline = data.won
+    ? `Last solvent operator standing. ${scoreTxt}.`
+    : `Bankrupted in ${scoreTxt}. Avenge me.`;
   const lines = wrapText(ctx, headline, S - 140);
   let y = 230;
   for (const line of lines) {
@@ -158,10 +160,10 @@ export async function drawShareCard(data: ShareData): Promise<HTMLCanvasElement>
 
   // stat grid (ledger)
   const stats: Array<[string, string]> = [
-    ["Empire score", gbpFull(data.result.score.total)],
-    ["Monthly NOI", `${gbpFull(data.result.score.noi)}/mo`],
-    ["Strategy", data.result.strategyLabel],
+    ["Outcome", data.won ? "WINNER" : `out · month ${data.result.survivalMonth}`],
+    ["Final cash", gbpFull(data.result.cash)],
     ["Live units / areas", `${data.result.unitsLive} / ${data.result.areasControlled}`],
+    ["Rivals bankrupted", `${data.result.bankruptciesCaused}`],
   ];
   const cellW = (S - 120 - 24) / 2;
   const cellH = 118;
@@ -220,7 +222,9 @@ export async function downloadShareCard(data: ShareData) {
 export function shareText(data: ShareData): string {
   const arch = ARCHETYPES[data.result.archetype];
   return [
-    `I built a ${gbpFull(Math.max(0, data.result.score.total))} rental empire in 10 minutes. ${arch.emoji}`,
+    data.won
+      ? `Last solvent operator standing — I bankrupted my rivals by month ${data.result.survivalMonth}. ${arch.emoji}`
+      : `I went bankrupt in month ${data.result.survivalMonth} of Rental Rush. Beat that. ${arch.emoji}`,
     `Archetype: ${arch.name} · Strategy: ${data.result.strategyLabel}`,
     `Biggest win: ${data.result.biggestWin}`,
     `Biggest mistake: ${data.result.biggestMistake}`,
