@@ -32,6 +32,12 @@ npm run dev          # http://localhost:3000
 
 Requires Node 20+.
 
+Analytics are optional and off by default. The live site loads Google Analytics
+only because `NEXT_PUBLIC_GA_ID` is set in its deploy environment; locally and in
+forks the var is unset, so no tracking scripts load and no data is sent. To use
+your own, copy `.env.example` to `.env.local` and set the ID. See
+`src/components/Analytics.tsx`.
+
 ## How it's built
 
 - **Next.js (App Router) · React · TypeScript · Tailwind v4 · Zustand · Motion**

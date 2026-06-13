@@ -12,6 +12,7 @@ import { botActionsFor } from "./game/bots";
 import { loadGame, saveGame, clearSave } from "./game/save";
 import { todayKey } from "./game/leaderboard";
 import * as audio from "./audio";
+import { track } from "./analytics";
 
 export interface Toast {
   id: number;
@@ -137,6 +138,7 @@ export const useGame = create<Store>()((set, get) => {
   const showOver = () => {
     const g = get().game;
     if (!g) return;
+    track("game_over", { won: g.winnerId === 0, month: g.month, mode: g.mode });
     clearSave();
     set((s) => ({
       ui: { ...s.ui, screen: "over", busy: false, pendingVisible: false, banner: null, sheet: null },
@@ -337,6 +339,7 @@ export const useGame = create<Store>()((set, get) => {
       saveGame(game);
       audio.initAudio();
       audio.startBackground();
+      track("game_start", { mode });
       void pump();
     },
 
