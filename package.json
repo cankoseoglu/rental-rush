@@ -9,7 +9,8 @@
     "lint": "eslint",
     "simulate": "tsx scripts/simulate.ts 200",
     "stress": "tsx scripts/stress.ts",
-    "test": "tsx scripts/stress.ts && tsx scripts/simulate.ts 100"
+    "test": "tsx scripts/stress.ts && tsx scripts/simulate.ts 100",
+    "uitest": "node scripts/uitest.mjs"
   },
   "dependencies": {
     "canvas-confetti": "^1.9.4",
@@ -28,6 +29,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
+    "puppeteer-core": "^25.1.0",
     "tailwindcss": "^4",
     "tsx": "^4.22.4",
     "typescript": "^5"

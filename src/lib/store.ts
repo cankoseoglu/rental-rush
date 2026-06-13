@@ -243,7 +243,10 @@ export const useGame = create<Store>()((set, get) => {
       if (g.phase !== "awaitRoll") return;
 
       if (!isBotTurn) {
-        set((s) => ({ ui: { ...s.ui, busy: false, banner: null, pendingVisible: false } }));
+        // fresh turn: close any stale inspection panel from earlier turns
+        set((s) => ({
+          ui: { ...s.ui, busy: false, banner: null, pendingVisible: false, selectedAreaId: null },
+        }));
         return;
       }
       set((s) => ({
@@ -319,7 +322,7 @@ export const useGame = create<Store>()((set, get) => {
       if (!game || game.over || ui.busy) return;
       const p = game.players[game.current];
       if (!p.isHuman || game.phase !== "awaitRoll" || game.pendingQueue.length) return;
-      set((s) => ({ ui: { ...s.ui, busy: true } }));
+      set((s) => ({ ui: { ...s.ui, busy: true, selectedAreaId: null, sheet: null } }));
       dispatch(game, { t: "ROLL" });
       pushToasts();
       refresh();
@@ -342,6 +345,14 @@ export const useGame = create<Store>()((set, get) => {
       if (!g.pendingQueue.length) {
         set((s) => ({ ui: { ...s.ui, pendingVisible: false } }));
         void pump();
+        return;
+      }
+      // queue continues but control moved to a bot (e.g. the month-end march
+      // [you, Maya, Sam]) — hand back to the pump or the game freezes
+      const nowBot = !g.players[g.current].isHuman || get().ui.autoplay;
+      if (nowBot) {
+        set((s) => ({ ui: { ...s.ui, pendingVisible: false } }));
+        void pump();
       }
     },
 
@@ -349,3 +360,8 @@ export const useGame = create<Store>()((set, get) => {
       set((s) => ({ ui: { ...s.ui, toasts: s.ui.toasts.filter((t) => t.id !== id) } })),
   };
 });
+
+// Debug/automation handle (used by scripts/uitest.mjs; harmless in production).
+if (typeof window !== "undefined") {
+  (window as Window & { __rr?: typeof useGame }).__rr = useGame;
+}

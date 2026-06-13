@@ -729,30 +729,45 @@ export const eventById = (id: string): GameEvent => {
   return e;
 };
 
-const FALLBACKS: Record<EventCategory, { flavor: string; apply: (ctx: EventCtx) => string[] }> = {
+const FALLBACKS: Record<
+  EventCategory,
+  { title: (ctx: EventCtx) => string; flavor: (ctx: EventCtx) => string; apply: (ctx: EventCtx) => string[] }
+> = {
   guest: {
-    flavor: "A quiet week. Guests check in, guests check out, nobody mentions the wifi. Suspicious, frankly.",
+    title: (ctx) => (liveAssets(ctx.p).length ? "Quiet week" : "No guests yet"),
+    flavor: (ctx) =>
+      liveAssets(ctx.p).length
+        ? "A quiet week. Guests check in, guests check out, nobody mentions the wifi. Suspicious, frankly."
+        : "You have no live units, so no guests — just time. You spend the week fixing a mate's listing photos and pricing, and they insist on paying you for it.",
     apply: (ctx) => {
       ctx.p.cash += 500;
-      return ["+£500 of small upsells"];
+      return [liveAssets(ctx.p).length ? "+£500 of small upsells" : "+£500 consulting favour"];
     },
   },
   owner: {
-    flavor: "You call an old landlord contact to stay warm. Pleasant chat, no business. Yet.",
+    title: () => "Quiet week",
+    flavor: (ctx) =>
+      ctx.p.assets.length
+        ? "You call an old landlord contact to stay warm. Pleasant chat, no business. Yet."
+        : "You take a landlord contact out for coffee and talk a big game about the empire you're about to build. They seem charmed. Keep their number.",
     apply: (ctx) => {
       ctx.p.trust = clamp(ctx.p.trust + 2, 1, 100);
       return ["Owner trust +2"];
     },
   },
   regulation: {
-    flavor: "A new consultation paper on short lets is published. 84 pages. You skim the executive summary like everyone else.",
+    title: () => "Quiet week",
+    flavor: () =>
+      "A new consultation paper on short lets is published. 84 pages. You skim the executive summary like everyone else.",
     apply: (ctx) => {
       rep(ctx.p, 1);
       return ["Rep +1"];
     },
   },
   market: {
-    flavor: "The market does nothing dramatic for once. Operators everywhere feel briefly, unnervingly calm.",
+    title: () => "Quiet week",
+    flavor: () =>
+      "The market does nothing dramatic for once. Operators everywhere feel briefly, unnervingly calm.",
     apply: () => [],
   },
 };
@@ -766,14 +781,16 @@ export function drawEvent(ctx: EventCtx, category: EventCategory): PendingAction
   );
   if (!pool.length) {
     const fb = FALLBACKS[category];
+    const title = fb.title(ctx);
+    const flavor = fb.flavor(ctx);
     const effects = fb.apply(ctx);
     return {
       kind: "event",
       eventId: `fallback_${category}`,
       category,
-      title: "Quiet week",
+      title,
       emoji: "🍵",
-      flavor: fb.flavor,
+      flavor,
       effects,
       choices: [],
       memo: {},

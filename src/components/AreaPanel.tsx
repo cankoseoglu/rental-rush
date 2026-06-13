@@ -43,7 +43,7 @@ const demandWord = (n: number) => (n >= 3 ? "High" : n === 2 ? "Medium" : "Low")
 
 export default function AreaPanel({
   areaId,
-  interactive,
+  interactive: interactiveProp,
 }: {
   areaId: string;
   interactive: boolean;
@@ -57,6 +57,15 @@ export default function AreaPanel({
   const controllerId = game.control[area.id];
   const controller = controllerId !== null && controllerId !== undefined ? game.players[controllerId] : null;
   const head = game.pendingQueue[0];
+  // Deals are only legal on the tile you're standing on. Derive that from the
+  // engine state directly — never trust the parent's flag alone.
+  const interactive =
+    interactiveProp &&
+    head?.kind === "area" &&
+    head.areaId === areaId &&
+    game.current === 0 &&
+    me.pos === game.tiles.find((t) => t.areaId === areaId)?.idx &&
+    !game.over;
   const backOffice =
     game.current === 0 && !ui.busy && !game.over && (!head || head.kind === "area");
 
@@ -367,7 +376,8 @@ export default function AreaPanel({
         </>
       ) : (
         <div className="rounded-xl bg-ink-800/50 px-3 py-2 text-center text-[0.66rem] text-cream-50/45">
-          Land here on a roll to rent, buy, manage or lease the building.
+          👀 Scouting only — you can only do deals on the tile you're standing on.
+          Roll and land here to rent, buy, manage or lease.
         </div>
       )}
     </div>
