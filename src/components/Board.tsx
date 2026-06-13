@@ -242,7 +242,7 @@ export default function Board() {
     <div className="no-scrollbar w-full overflow-x-auto">
       <div
         className="mx-auto w-full min-w-[340px] px-1"
-        style={{ maxWidth: "min(100%, calc(100svh - 220px))" }}
+        style={{ maxWidth: "min(100%, calc(100svh - 150px))" }}
       >
         <div
           className="relative grid aspect-square w-full grid-cols-7 grid-rows-7 gap-[3px] rounded-2xl border-[3px] border-[#131722] p-[5px]"

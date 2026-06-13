@@ -29,8 +29,8 @@ export default function GameScreen() {
 
   return (
     <div className="min-h-dvh" data-testid="game-screen">
-      <div className="mx-auto flex max-w-[1600px] flex-col gap-2.5 pb-32 pt-2 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(340px,380px)] lg:items-start lg:gap-5 lg:px-5">
-        {/* left column: chrome + board */}
+      <div className="mx-auto flex max-w-[1600px] flex-col gap-2.5 pb-32 pt-2 lg:grid lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start lg:gap-5 lg:px-5">
+        {/* left column: chrome + board (board gets the full height on desktop) */}
         <div className="flex min-w-0 flex-col gap-2.5">
           <div className="flex w-full items-center justify-between px-3 lg:px-0">
             <button onClick={quitToMenu} className="font-display text-sm font-extrabold tracking-tight">
@@ -58,23 +58,34 @@ export default function GameScreen() {
             </div>
           </div>
 
-          <PlayerStrip />
+          {/* mobile keeps players above + meters below the board */}
+          <div className="lg:hidden">
+            <PlayerStrip />
+          </div>
           <Board />
-          <HumanHud />
+          <div className="lg:hidden">
+            <HumanHud />
+          </div>
         </div>
 
-        {/* right rail (desktop) */}
-        <aside className="panel sticky top-2 hidden max-h-[calc(100dvh-1rem)] overflow-y-auto lg:block">
-          {panelAreaId ? (
-            <AreaPanel areaId={panelAreaId} interactive={interactiveArea === panelAreaId} />
-          ) : (
-            <div className="p-6 text-center text-[0.78rem] text-cream-50/45">
-              <div className="mb-2 text-2xl">🗺️</div>
-              Tap any neighbourhood to inspect it.
-              <br />
-              Land on one to do deals.
-            </div>
-          )}
+        {/* right rail (desktop): players, meters, then the area panel. The
+            column width is a plain 360px and the rail clips overflow, so its
+            contents can never spill off-screen. */}
+        <aside className="sticky top-2 hidden max-h-[calc(100dvh-1rem)] min-w-0 flex-col gap-2.5 overflow-y-auto overflow-x-hidden lg:flex">
+          <PlayerStrip />
+          <HumanHud />
+          <div className="panel min-w-0">
+            {panelAreaId ? (
+              <AreaPanel areaId={panelAreaId} interactive={interactiveArea === panelAreaId} />
+            ) : (
+              <div className="p-6 text-center text-[0.78rem] text-cream-50/45">
+                <div className="mb-2 text-2xl">🗺️</div>
+                Tap any neighbourhood to inspect it.
+                <br />
+                Land on one to do deals.
+              </div>
+            )}
+          </div>
         </aside>
       </div>
 
